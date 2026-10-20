@@ -2,11 +2,26 @@
 
 Objetivo: quatro jogadores no Windows/Steam, do Templo Dilapidado aos finais da campanha, com lançador próprio, DLL nativa, configurações, sessões persistentes e saves exclusivos. [PROGRESS.md](../PROGRESS.md) mostra a aceitação atual; [progress.json](../progress.json) é a única fonte do percentual.
 
+## Etapas de execução
+
+Estas etapas mostram a ordem do trabalho. Os sete grupos de pontos continuam medindo a aceitação funcional; completar uma etapa de preparação não soma pontos.
+
+| Etapa | Situação atual | Entrega para avançar | Uso do jogo e do Ghidra |
+|---|---|---|---|
+| 0. Preparação | Base compilada e publicada; testes locais aprovados. | Ferramentas, repositório, protocolo e acompanhamento disponíveis. | Compilação e testes independentes dispensam o jogo aberto. |
+| **1. Pesquisa nativa** | **Em andamento.** Uma leitura limitada identificou `WorldChrManImp`. | Entender e validar acesso a personagens, ciclo de atualização e funções necessárias, com evidência da versão exata. | REA/Ghidra analisam binários; jogo aberto permite confirmar observações em execução. |
+| 2. Integração segura | Planejada; DLL ainda não carregada dentro de Sekiro. | Inicialização e encerramento da DLL no jogo, compatibilidade exata e saves exclusivos comprovados. | Testes locais no jogo, com recuperação e isolamento verificados. |
+| 3. Prova para dois | Planejada; exige uma segunda máquina e conta. | Personagem remoto real, conexão Steam e combate contra o mesmo inimigo. | Dois jogos em máquinas distintas; testes de lógica isolados não substituem essa prova. |
+| 4. Quatro e continuidade | Planejada. | Quatro atores, combate, mortes, chefes, descanso, viagem e reconexão preservando a sessão. | Quatro máquinas nos critérios que exigem quatro participantes. |
+| 5. Campanha e entrega | Planejada. | Ramificações, encontros especiais, estabilidade, pacote e recuperação documentados. | Percurso real da campanha e teste prolongado do grupo. |
+
+O Ghidra controlado pelo REA mantém sua própria sessão de análise. A janela aberta manualmente pelo participante não é automaticamente a sessão controlada pela ferramenta. A observação já realizada no jogo está registrada em [RESEARCH.md](RESEARCH.md); o [relatório inicial](validation/bootstrap-2026-10-20.md) registra o alcance dos testes.
+
 ## Marcos e condições para avançar
 
 | Marco | Evidência necessária |
 |---|---|
-| Ambiente e isolamento | Executável identificado, núcleo carregado e saves normais preservados em teste real. |
+| Ambiente e isolamento | Executável identificado, DLL carregada dentro de Sekiro e isolamento dos saves normais comprovado em teste real. |
 | Viabilidade para dois | Dois personagens reais e visíveis, combate contra o mesmo inimigo e convite Steam entre máquinas distintas. |
 | Quatro participantes | Um anfitrião e três convidados com atores distintos, IA, combate e conexão estáveis. |
 | Continuidade | Morte, ressurreição, chefe, descanso, viagem e reconexão preservam a sessão e a campanha. |
@@ -19,7 +34,7 @@ Não estimar uma data de campanha completa antes da prova de viabilidade para do
 
 O formato dos Seamless de Yui orienta a experiência de instalação e sessão: lançador, DLL, configurações e saves separados. Não atribuímos a eles nosso compilador, protocolo ou arquitetura interna. A integração e a replicação são específicas de Sekiro, que precisa receber os recursos multiplayer necessários.
 
-O núcleo mantém interfaces para jogo, transporte e persistência. O anfitrião confirma inimigos, vida, postura, execuções, recompensas e eventos do mundo; clientes apresentam seu personagem imediatamente e recebem correções limitadas. Sessão e campanha usam identidades e revisões para evitar confusão após carregamentos ou reconexões. Saída do anfitrião encerra a conexão e permite retomada posterior, sem migração automática na v1.
+Na arquitetura prevista, o núcleo será ligado a adaptadores de jogo, transporte e persistência. O anfitrião confirmará inimigos, vida, postura, execuções, recompensas e eventos do mundo; clientes apresentarão seu personagem imediatamente e receberão correções limitadas. Sessão e campanha usarão identidades e revisões para evitar confusão após carregamentos ou reconexões. A saída do anfitrião encerrará a conexão e permitirá retomada posterior, sem migração automática na v1. O código atual exercita somente a lógica independente em memória; esses adaptadores e comportamentos de gameplay ainda precisam ser implementados.
 
 REA/Ghidra orientam a investigação e registram evidências; Co-op Anything organiza conhecimento e triagem. Nenhuma conexão de ferramenta é contada como funcionalidade entregue. Os arquivos do Sekiro Online antigo servem apenas como referência de investigação conforme as permissões aplicáveis, sem redistribuição de binários ou recursos de terceiros.
 

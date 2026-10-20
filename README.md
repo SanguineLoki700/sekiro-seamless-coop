@@ -6,6 +6,10 @@ Projeto comunitário para criar coop contínua de até **quatro jogadores** em *
 
 Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com/SanguineLoki700/sekiro-seamless-coop).
 
+**Fase atual: 1 — pesquisa da integração nativa.** O jogo aberto já foi usado para uma observação limitada, somente de leitura, que identificou `WorldChrManImp`. Ainda precisamos validar as funções e os dados que permitem controlar personagens. As próximas etapas são carregar a DLL no jogo com saves isolados, provar coop entre duas máquinas e ampliar para quatro jogadores. Veja as [etapas e quando o jogo precisa estar aberto](docs/ROADMAP.md#etapas-de-execução).
+
+O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
+
 ## Progresso verificável
 
 <!-- progress:start -->
@@ -28,6 +32,8 @@ Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com
 <!-- progress:end -->
 
 Os pontos pertencem a critérios funcionais aceitos. Preparar ferramentas, criar o repositório, compilar uma estrutura inicial ou fechar Issues não aumenta esse número.
+
+CI verde comprova compilação e testes independentes; não concede pontos nem comprova funcionamento em Sekiro. O [registro da validação inicial](docs/validation/bootstrap-2026-10-20.md) distingue os testes locais da observação no jogo.
 
 ## O que existe hoje
 
