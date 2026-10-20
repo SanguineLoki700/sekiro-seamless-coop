@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-windows:
+    name: Windows native build and tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v4.2.2; SHA verified against the upstream tag.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Configure MSVC x64
+        run: cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test independent native components
+        run: ctest --test-dir build -C Release --output-on-failure --no-tests=error
+
+  progress:
+    name: Verified progress ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-python v5.6.0; SHA verified against the upstream tag.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Test progress rules in temporary repositories
+        run: python -m unittest discover -s tests -p test_progress.py -v
+      - name: Validate evidence and generated views without writing
+        run: python tools/progress.py --check

@@ -1,0 +1,26 @@
+name: Tarefa ou proposta
+description: Planeje trabalho e associe um critério funcional, quando aplicável.
+title: "[Tarefa] "
+body:
+  - type: input
+    id: criterion
+    attributes:
+      label: Critério da baseline ou preparação
+      description: Use o ID de progress.json ou diga que é preparação fora dos 100 pontos.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Resultado e aceitação
+      description: Qual comportamento será comprovado? Liste o cenário de teste e dependências.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Plano de evidência
+      description: Relatório versionado, build, versão/hash do jogo, participantes e resultado, quando houver teste funcional.
+  - type: markdown
+    attributes:
+      value: "Fechar uma Issue não concede pontos. A aceitação funcional exige PR na baseline e evidência revisada."

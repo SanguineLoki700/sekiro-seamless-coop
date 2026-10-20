@@ -1,0 +1,31 @@
+name: Relato de problema
+description: Informe um defeito reproduzível na infraestrutura ou em uma build identificada.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "O projeto ainda não é um mod jogável. Não envie arquivos do jogo, saves pessoais ou credenciais."
+  - type: input
+    id: build
+    attributes:
+      label: Build ou commit
+      description: Informe o commit e se o problema é na infraestrutura ou em um teste no jogo.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Como reproduzir
+      description: Inclua ambiente, passos, comportamento esperado e resultado observado.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidências e contexto
+      description: Logs sem dados privados; se houver teste no jogo, versão, jogadores, máquinas e rede.
+  - type: input
+    id: criterion
+    attributes:
+      label: Critério relacionado
+      description: ID de progress.json, se conhecido. Abrir ou fechar esta Issue não altera o percentual.

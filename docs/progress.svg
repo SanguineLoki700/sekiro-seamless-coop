@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="208" height="24" role="img" aria-label="v1 verificada: 0%">
+  <title>v1 verificada: 0%</title>
+  <rect width="208" height="24" rx="4" fill="#273244"/>
+  <path d="M147 0h57a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4h-57z" fill="#256f91"/>
+  <g fill="#fff" font-family="Verdana,Arial,sans-serif" font-size="11" text-anchor="middle">
+    <text x="73" y="16">v1 verificada</text>
+    <text x="177" y="16">0%</text>
+  </g>
+</svg>

@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "baseline": "v1-campanha-4-jogadores",
+  "preparation": [
+    {
+      "id": "prep-local-workspace",
+      "label": "Pasta local do projeto",
+      "status": "ready",
+      "note": "A pasta local foi inspecionada. Isso não comprova um mod funcional."
+    },
+    {
+      "id": "prep-command-tools",
+      "label": "Python, Git e CMake encontrados",
+      "status": "ready",
+      "note": "Os três executáveis foram localizados no ambiente. A integração no jogo ainda precisa ser construída e testada."
+    },
+    {
+      "id": "prep-native-analysis",
+      "label": "Investigação de Sekiro e do mod antigo",
+      "status": "in_progress",
+      "note": "Investigação em andamento; instalação Steam 1.06 (build 5794815) identificada. SHA-256 do executável: 637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856. Isso não comprova hooks ou combate."
+    },
+    {
+      "id": "prep-github",
+      "label": "Publicação no GitHub",
+      "status": "ready",
+      "note": "Repositório público criado e confirmado: https://github.com/SanguineLoki700/sekiro-seamless-coop . Isso não representa funcionalidades entregues."
+    },
+    {
+      "id": "prep-multiplayer-test-rig",
+      "label": "Contas e máquinas para validação multiplayer",
+      "status": "blocked",
+      "note": "A validação final exige quatro contas Steam e quatro máquinas distintas; essa disponibilidade ainda não foi comprovada."
+    },
+    {
+      "id": "prep-native-build",
+      "label": "Compilação e testes locais do bootstrap",
+      "status": "ready",
+      "note": "MSVC x64 Debug/Release e testes locais do runtime, core e política da sonda passaram. Isso não comprova multiplayer nem carregamento da DLL no jogo."
+    },
+    {
+      "id": "prep-live-observation",
+      "label": "Primeira leitura do Sekiro aberto",
+      "status": "ready",
+      "note": "A sonda confirmou a identidade exata e leu oito bytes do endereço candidato derivado do Sekiro Online. O valor não era zero e a região era comprometida/legível. O significado da estrutura e o controle de atores continuam pendentes."
+    }
+  ],
+  "groups": [
+    {
+      "id": "core",
+      "label": "Núcleo, compatibilidade e saves isolados",
+      "weight": 10,
+      "criteria": [
+        {
+          "id": "core-launcher",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/1",
+          "label": "Lançador dedicado inicia o mod",
+          "weight": 3,
+          "status": "in_progress",
+          "min_players": 1,
+          "min_machines": 1,
+          "acceptance": "O lançador detecta a instalação Steam suportada, valida os arquivos e inicia a DLL; abrir o jogo normalmente continua disponível.",
+          "evidence": null
+        },
+        {
+          "id": "core-native-runtime",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/2",
+          "label": "DLL e compatibilidade verificadas no jogo",
+          "weight": 3,
+          "status": "in_progress",
+          "min_players": 1,
+          "min_machines": 1,
+          "acceptance": "A DLL carrega no executável identificado e recusa versões sem suporte antes de aplicar hooks.",
+          "evidence": null
+        },
+        {
+          "id": "core-save-isolation",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/3",
+          "label": "Saves do mod isolados e recuperáveis",
+          "weight": 4,
+          "status": "planned",
+          "min_players": 1,
+          "min_machines": 1,
+          "acceptance": "Criar, salvar, atualizar e remover o mod preserva os saves normais; restauração de backup foi comprovada.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "actors",
+      "label": "Personagens remotos e movimentação",
+      "weight": 20,
+      "criteria": [
+        {
+          "id": "actors-spawn",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/4",
+          "label": "Personagem remoto real e visível",
+          "weight": 6,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Duas instalações exibem atores remotos controláveis com modelo, armas e animações, sem substituir o jogador local.",
+          "evidence": null
+        },
+        {
+          "id": "actors-movement",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/5",
+          "label": "Movimento e animações sincronizados",
+          "weight": 6,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Posição, orientação e animações são replicadas com interpolação e correções limitadas durante exploração real.",
+          "evidence": null
+        },
+        {
+          "id": "actors-traversal",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/6",
+          "label": "Gancho, natação, furtividade e próteses",
+          "weight": 4,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "As formas especiais de locomoção e uso de próteses permanecem visíveis e coerentes nas duas instalações.",
+          "evidence": null
+        },
+        {
+          "id": "actors-four-players",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/7",
+          "label": "Quatro jogadores simultâneos",
+          "weight": 4,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Um anfitrião e três convidados possuem atores distintos e entram e saem sem corromper referências ou atores locais.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "combat",
+      "label": "Combate, IA, postura e chefes",
+      "weight": 25,
+      "criteria": [
+        {
+          "id": "combat-damage-ai",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/8",
+          "label": "Dano e alvos da IA compartilhados",
+          "weight": 7,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Jogadores combatem o mesmo inimigo; o anfitrião confirma vida e dano, e a IA reconhece os participantes sem fogo amigo.",
+          "evidence": null
+        },
+        {
+          "id": "combat-posture-deflect",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/9",
+          "label": "Postura, deflect e Mikiri",
+          "weight": 6,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Deflect, postura e Mikiri mantêm consequências coerentes para atacante, defensor e anfitrião com latência medida.",
+          "evidence": null
+        },
+        {
+          "id": "combat-executions",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/10",
+          "label": "Deathblows e ataques simultâneos",
+          "weight": 6,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Execuções e recompensas são confirmadas uma vez, inclusive quando dois jogadores disputam o mesmo deathblow.",
+          "evidence": null
+        },
+        {
+          "id": "combat-boss-phases",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/11",
+          "label": "Fases de chefes e ressurreição",
+          "weight": 6,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Fases e marcadores de execução dos chefes convencionais permanecem consistentes para quatro jogadores.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "steam",
+      "label": "Sessão Steam, convites e reconexão",
+      "weight": 10,
+      "criteria": [
+        {
+          "id": "steam-lobby-invites",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/12",
+          "label": "Lobby e convites Steam reais",
+          "weight": 4,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Contas Steam distintas criam lobby e entram por convite com o mod aberto, sem servidor antigo de sinais.",
+          "evidence": null
+        },
+        {
+          "id": "steam-transport",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/13",
+          "label": "Transporte compatível e tolerante a falhas",
+          "weight": 3,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Versões incompatíveis são recusadas; atraso de até 150 ms e perda simulada de 3% não duplicam eventos duráveis.",
+          "evidence": null
+        },
+        {
+          "id": "steam-reconnect",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/14",
+          "label": "Entrada tardia e reconexão",
+          "weight": 3,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Entrada tardia e reconexão retomam um checkpoint compatível; saída do anfitrião permite retomar depois sem migração automática.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "continuity",
+      "label": "Continuidade, viagens e persistência",
+      "weight": 15,
+      "criteria": [
+        {
+          "id": "continuity-death",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/15",
+          "label": "Morte e ressurreição sem encerrar sessão",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Ressurreição é preservada; morte definitiva permite espectador e derrota do grupo retorna ao ídolo sem perder a sessão.",
+          "evidence": null
+        },
+        {
+          "id": "continuity-travel",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/16",
+          "label": "Descanso e viagens coordenados",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Chefes, descanso e transições mantêm a sessão; carregamento lento e pacotes de uma região anterior são tratados corretamente.",
+          "evidence": null
+        },
+        {
+          "id": "continuity-checkpoints",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/17",
+          "label": "Checkpoints e recuperação de gravação",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 2,
+          "min_machines": 2,
+          "acceptance": "Identidade e revisão da campanha permitem retomada; gravação interrompida é recuperável e campanhas divergentes não se misturam.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "campaign",
+      "label": "Campanha, ramificações e encontros especiais",
+      "weight": 15,
+      "criteria": [
+        {
+          "id": "campaign-progression",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/18",
+          "label": "Progresso compartilhado e inventário pessoal",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "História, chefes e desbloqueios são compartilhados; inventário é pessoal e recompensas também chegam a participantes mortos.",
+          "evidence": null
+        },
+        {
+          "id": "campaign-branches",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/19",
+          "label": "Campanha principal e ramificações",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Do Templo Dilapidado aos finais previstos, escolhas do anfitrião e eventos não bloqueiam progressão; a matriz de cobertura está anexada.",
+          "evidence": null
+        },
+        {
+          "id": "campaign-special-bosses",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/20",
+          "label": "Chefes e eventos especiais",
+          "weight": 5,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Macacos da Biombo, Dragão Divino e outros encontros especiais listados na matriz possuem adaptações e testes reproduzíveis.",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "id": "release",
+      "label": "Estabilidade, pacote e entrega pública",
+      "weight": 5,
+      "criteria": [
+        {
+          "id": "release-endurance",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/21",
+          "label": "Sessão de duas horas com quatro jogadores",
+          "weight": 3,
+          "status": "planned",
+          "min_players": 4,
+          "min_machines": 4,
+          "acceptance": "Uma sessão contínua de duas horas termina sem crash nem divergência persistente de progressão, com relatório das condições de rede.",
+          "evidence": null
+        },
+        {
+          "id": "release-package",
+          "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/22",
+          "label": "Instalação, atualização, remoção e recuperação",
+          "weight": 2,
+          "status": "planned",
+          "min_players": 1,
+          "min_machines": 1,
+          "acceptance": "Pacote reproduzível, documentação PT/EN, licenças e diagnósticos permitem instalar, atualizar e recuperar saves do mod em uma instalação limpa.",
+          "evidence": null
+        }
+      ]
+    }
+  ]
+}

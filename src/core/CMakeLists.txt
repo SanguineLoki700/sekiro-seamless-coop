@@ -1,0 +1,17 @@
+add_library(skcoop_core STATIC core.cpp wire.cpp)
+target_include_directories(skcoop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+target_compile_features(skcoop_core PUBLIC cxx_std_20)
+set_target_properties(skcoop_core PROPERTIES CXX_EXTENSIONS OFF)
+
+if(MSVC)
+    target_compile_options(skcoop_core PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(skcoop_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(skcoop_core_tests "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/core_tests.cpp")
+    target_link_libraries(skcoop_core_tests PRIVATE skcoop_core)
+    set_target_properties(skcoop_core_tests PROPERTIES CXX_EXTENSIONS OFF)
+    add_test(NAME skcoop_core_tests COMMAND skcoop_core_tests)
+endif()
