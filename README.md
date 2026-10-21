@@ -91,6 +91,8 @@ python tools/progress.py --check
 
 O gerador usa somente a biblioteca padrão do Python. O CI valida o cálculo sem permissão de escrita. Testes reais do jogo exigem instalações legítimas dos participantes; o CI público não executa Sekiro.
 
+O [método de pesquisa e testes](docs/WORKFLOW.md) registra as práticas adotadas do Co-op Anything, como isolamento da instalação, notas de evidência, ferramentas com versão fixada e QA automatizado planejado para clientes reais.
+
 ## English status
 
 This is an early infrastructure project, **not a playable co-op mod**. The v1 target is four-player seamless co-op for Windows/Steam, with a dedicated launcher, native DLL, persistent Steam sessions and isolated mod saves. In-game hooks, remote characters, Steam transport and save redirection remain unverified. The percentage above counts accepted functional criteria, not elapsed development time or closed issues.

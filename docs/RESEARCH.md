@@ -98,6 +98,34 @@ hooks, inject a DLL, launch the game, or access saves. Process IDs and heap
 addresses are omitted from this public record. No functional progress is
 credited.
 
+## Reinstalled baseline checked on 2026-10-21
+
+**Observed:** the owner reported reinstalling Sekiro. The current executable has
+the same SHA-256, byte size, AMD64 architecture and file/product version 1.6.0.0
+listed above. The Steam manifest still reports build 5794815. Co-op Anything's
+identity query and REA's PE-resource parser independently agreed on the file
+digest. REA evidence: `ev_5f2d2d495a05dc21bf4e1217394e5476b8624b08c97a45cf4c079475a8a4c47d`.
+
+The current root inventory did not contain the checked graphics/proxy/mod
+markers, including `dinput8.dll`, `dxgi.dll`, `d3d11.dll`, `ReShade.ini`,
+`reshade-shaders`, and `mods`. This is a bounded inventory, not verification
+of every file against the Steam depot manifests. A separate private copy of
+the executable was made for static analysis and verified against the digest;
+it is not a complete runnable test installation.
+
+**Derived:** static research for the identical disk executable remains a
+candidate basis for further investigation. The 2026-10-20 live observations
+describe the earlier installation/session, which contained graphics changes.
+They have not been repeated against this reinstalled setup.
+
+**Unknown:** current runtime object state, actor layout/lifetime, native
+control functions, save isolation, and full-depot integrity. The game was
+closed and no process named Sekiro was observed. This review did not launch
+the game, access saves, inject code or modify game files. No gameplay profile
+was enabled and no functional progress was credited.
+
+The adopted research and QA practices are documented in [WORKFLOW.md](WORKFLOW.md).
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)
