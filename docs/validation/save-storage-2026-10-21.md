@@ -1,6 +1,6 @@
 # Armazenamento e configuração de saves — 2026-10-21
 
-Código avaliado: [`6df4a5bb79ee7f6d7fbeed70b74d54332aa8b7f5`](https://github.com/SanguineLoki700/sekiro-seamless-coop/commit/6df4a5bb79ee7f6d7fbeed70b74d54332aa8b7f5).
+Código avaliado: [`7030dfcb094af0e313e9be5fd7a44ba86df42e8b`](https://github.com/SanguineLoki700/sekiro-seamless-coop/commit/7030dfcb094af0e313e9be5fd7a44ba86df42e8b), incluindo a correção de preparação das fixtures no ambiente de CI. Implementação inicial: [`6df4a5bb79ee7f6d7fbeed70b74d54332aa8b7f5`](https://github.com/SanguineLoki700/sekiro-seamless-coop/commit/6df4a5bb79ee7f6d7fbeed70b74d54332aa8b7f5).
 
 Este incremento implementa armazenamento de bytes opacos em diretórios de teste NTFS e leitura estrita de configuração. **Não intercepta saves de Sekiro, não habilita gameplay e não aceita um critério funcional da v1.** O progresso funcional permanece em 0%.
 
@@ -30,6 +30,8 @@ Os testes de armazenamento criaram somente diretórios temporários exclusivos. 
 Um handle que não compartilha exclusão provocou falha real de rename: o primário anterior permaneceu, o staging foi removido e o resultado informou a falha. Outro caso confirmou que backup concluído e primário recusado são reportados separadamente. Não se promete transação atômica entre os dois arquivos nem persistência de todos os metadados após perda de energia.
 
 Durante a revisão, a validação de tamanho na abertura impedia recuperar um primário vazio. A abertura passou a validar segurança física sem exigir conteúdo válido; a restauração exige backup válido e mantém a recusa de links e reparse points. Um caso específico reabre o armazenamento com primário vazio e restaura os bytes do backup.
+
+A primeira execução no runner Windows falhou na abertura das fixtures. A preparação usava diretamente o caminho temporário do ambiente, que pode conter um alias 8.3. As fixtures passaram a obter o nome canônico do diretório temporário por handle antes de criar sua própria árvore; a recusa de aliases no armazenamento foi mantida. A nova build passou novamente as seis suítes locais e, adicionalmente, os 13 casos de armazenamento com `TMP`/`TEMP` explicitamente apontando para um alias 8.3 real de um diretório de teste. O resultado do CI dessa correção deve ser consultado na PR; este relatório não afirma sucesso antecipado do runner.
 
 ## Limites e próxima integração
 
