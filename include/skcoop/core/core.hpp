@@ -8,7 +8,7 @@
 
 namespace skcoop::core {
 
-inline constexpr std::uint16_t protocol_version = 1;
+inline constexpr std::uint16_t protocol_version = 2;
 inline constexpr std::size_t max_players = 4;
 inline constexpr std::size_t max_snapshot_entities = 128;
 inline constexpr std::size_t max_durable_events = 4096;

@@ -91,15 +91,20 @@ EntityState read_entity(Reader& in) {
 }
 
 DecodeResult fail(WireError error) { return {error, std::nullopt}; }
-DecodeResult finish(Reader& reader, WireMessage value, bool valid) {
+DecodeResult finish(Reader& reader, WireMessage value, bool valid, const SessionId& session) {
     if (!reader.good) return fail(WireError::truncated);
     if (reader.offset != reader.bytes.size()) return fail(WireError::bad_length);
     if (!valid) return fail(WireError::invalid_value);
-    return {WireError::none, std::move(value)};
+    return {WireError::none, std::move(value), session};
 }
 } // namespace
 
-EncodeResult encode(const WireMessage& message) {
+bool valid_session_id(const SessionId& session) noexcept {
+    return std::any_of(session.begin(), session.end(), [](auto value) { return value != 0; });
+}
+
+EncodeResult encode(const WireMessage& message, const SessionId& session) {
+    if (!valid_session_id(session)) return {WireError::invalid_session, {}};
     Writer payload;
     auto kind = MessageKind::handshake;
     WireError error = WireError::none;
@@ -152,11 +157,13 @@ EncodeResult encode(const WireMessage& message) {
     packet.number(static_cast<std::uint8_t>(kind));
     packet.number(std::uint8_t{0});
     packet.number(static_cast<std::uint32_t>(payload.bytes.size()));
+    packet.fixed(session);
     packet.bytes.insert(packet.bytes.end(), payload.bytes.begin(), payload.bytes.end());
     return {WireError::none, std::move(packet.bytes)};
 }
 
-DecodeResult decode(std::span<const std::uint8_t> bytes) {
+DecodeResult decode(std::span<const std::uint8_t> bytes, const SessionId& expected_session) {
+    if (!valid_session_id(expected_session)) return fail(WireError::invalid_session);
     if (bytes.size() > max_packet_bytes) return fail(WireError::too_large);
     if (bytes.size() < wire_header_size) return fail(WireError::truncated);
     Reader header{bytes.first(wire_header_size)};
@@ -165,6 +172,9 @@ DecodeResult decode(std::span<const std::uint8_t> bytes) {
     const auto kind = static_cast<MessageKind>(header.number<std::uint8_t>());
     if (header.number<std::uint8_t>() != 0) return fail(WireError::invalid_value);
     const auto payload_size = header.number<std::uint32_t>();
+    const auto session = header.fixed<16>();
+    if (!valid_session_id(session)) return fail(WireError::invalid_session);
+    if (session != expected_session) return fail(WireError::wrong_session);
     if (payload_size != bytes.size() - wire_header_size) return fail(WireError::bad_length);
     Reader in{bytes.subspan(wire_header_size)};
     switch (kind) {
@@ -179,7 +189,7 @@ DecodeResult decode(std::span<const std::uint8_t> bytes) {
         const bool valid = has_checkpoint <= 1 && value.player != 0 && valid_build_identity(value.build) &&
             valid_campaign(value.checkpoint.campaign) &&
             (value.has_checkpoint || (value.checkpoint.revision == 0 && value.checkpoint.state_sha256 == Sha256{}));
-        return finish(in, value, valid);
+        return finish(in, value, valid, session);
     }
     case MessageKind::snapshot: {
         Snapshot value;
@@ -195,7 +205,7 @@ DecodeResult decode(std::span<const std::uint8_t> bytes) {
         value.entities.reserve(count);
         for (std::uint16_t i = 0; i < count; ++i) value.entities.push_back(read_entity(in));
         const bool valid = valid_snapshot(value);
-        return finish(in, std::move(value), valid);
+        return finish(in, std::move(value), valid, session);
     }
     case MessageKind::durable_event: {
         DurableEvent value;
@@ -206,11 +216,11 @@ DecodeResult decode(std::span<const std::uint8_t> bytes) {
         value.kind = static_cast<EventKind>(in.number<std::uint8_t>());
         value.subject = in.number<std::uint64_t>();
         value.value = in.number<std::uint32_t>();
-        return finish(in, value, valid_event(value));
+        return finish(in, value, valid_event(value), session);
     }
     case MessageKind::checkpoint: {
         const auto value = read_checkpoint(in);
-        return finish(in, value, valid_campaign(value.campaign));
+        return finish(in, value, valid_campaign(value.campaign), session);
     }
     default: return fail(WireError::unknown_type);
     }

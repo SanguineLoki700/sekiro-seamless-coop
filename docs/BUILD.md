@@ -19,8 +19,16 @@ ctest --preset windows-debug
 
 Release equivalents are `windows-release` for build/test. Binaries are under
 `build/msvc/bin/Debug` or `Release`. MSVC's runtime library is linked statically.
-The core tests register themselves through `src/core`; Windows smoke tests are
-also registered with CTest.
+The core tests register themselves through `src/core`. CTest also registers
+Windows runtime smoke tests, probe policy tests and save-path policy tests.
+The save policy runs only against controlled temporary fixtures; it does not
+install a game hook. See [SAVES.md](SAVES.md).
+
+The build copies `config/save_profile.ini` beside `game_profiles.ini`. Its
+`[SAVE] save_file_extension=co2` records the intended namespace; an INI reader
+and native save interception are not implemented by that file. Gameplay flags
+remain disabled. Wire protocol 2 now requires an explicit nonzero session ID
+for every encoded or decoded envelope; see [PROTOCOL.md](PROTOCOL.md).
 
 ## Available commands
 

@@ -126,6 +126,69 @@ was enabled and no functional progress was credited.
 
 The adopted research and QA practices are documented in [WORKFLOW.md](WORKFLOW.md).
 
+## Save integration investigation, later on 2026-10-21
+
+### Supplied Seamless settings
+
+The supplied DS1 and DS2 archives were rechecked without executing their
+binaries. `SeamlessCoop/ds1sc_settings.ini` lines 40-43 and
+`SeamlessCoop/ds2sc_settings.ini` lines 62-65 define
+`[SAVE] save_file_extension=co2`; their comments identify `.sl2` as the normal
+extension and allow alphanumeric extensions up to 120 characters. The INI
+SHA-256 values are `734845bc1b95a14354ff931116adab1077522064035f4ef5b1f6709cb21c36da`
+and `d454bcb143274d7bd9aeca3bf39e9e9bdc8319d6b5822db18d725bb67e73f31f`.
+
+This establishes a configuration contract, not the proprietary interception,
+backup, Cloud or profile implementation. The DS3 archive was not available
+for this repeat inspection; earlier DS3 launcher observations remain separate.
+The original save-policy module adopts `.co2` as its default namespace, with
+no automatic solo import. See [SAVES.md](SAVES.md).
+
+### Loaded-code observations
+
+The original game was started through Steam without installing a mod. A
+separate read-only helper checked the exact disk identity and selected image
+path, then read bounded main-image code and exception-table regions with
+`PROCESS_QUERY_INFORMATION | PROCESS_VM_READ`. Only selected instruction
+excerpts and metadata were retained privately, not a complete memory image.
+
+The disk `.text` region has approximately 8.0 bits/byte entropy; its bytes
+differed from the mapped `.text` region. Direct disk-code analysis was therefore
+not used to validate a save binding. The owned headless request was cancelled
+and its REA target closed. No DRM modification or alternate executable was made.
+
+Capstone 5.0.7 decoded loaded-code excerpts selected by RIP-relative string
+references and exception/unwind ranges. These are code observations, **not
+traces showing that each path executed**. The ranges do not prove complete
+function/CFG coverage.
+
+| Candidate RVA | Observation in loaded instructions / matching metadata |
+|---|---|
+| `0x1151c60` | References `%s/Sekiro/%s/`; calls the `SHGetFolderPathW` IAT slot with `CSIDL_APPDATA`. The account-component helper is unresolved. |
+| `0x1151dc0` | References `%s/Sekiro/` and the same AppData query. Both folder routines contain a `L"."` base-path fallback on query failure. |
+| `0x1cbb910` | Constructor-like range writes a vtable identified by MSVC RTTI as `SaveLoad2::SLContentFormat`, then passes `.sl2` and length 4 to a string helper for a member at offset `0xd8`. |
+| `0x1cc3760` | References `%s.bak` and calls `CopyFileW` with fail-if-exists set. An earlier virtual helper remains unresolved, so backup preservation/overwrite policy is unknown. |
+| `0x1cc3c00`, `0x1cc4370` | Reference `%s\\%s%s.bak` and forward paths to internal wrappers whose full I/O behavior is unresolved. |
+
+The `.sl2` literal is at RVA `0x2e4eee0` in the matching `.rdata`. The
+`SLContentFormat` vtable candidate is at `0x2e4f1c8`; its MSVC locator has
+signature 1 and a matching self-RVA. These facts identify research candidates,
+not a safe hook timing, callable ABI, or sufficient set of redirected operations.
+
+The observed folder and filename formats can produce mixed `/` and `\\`
+separators. That finding corrected the original path policy before publication;
+native-format and repeated-separator regression cases were added.
+
+The compiled `skcoop_probe --rtti` was also repeated on the reinstalled running
+game. Its exact-identity checks passed and it again reported
+`.?AVWorldChrManImp@NS_SPRJ@@`. Object layout, lifetime and actor control remain
+unverified.
+
+The observation window included an owner-loaded save. Before/after hashes of
+the normal save and backup differed; that window is excluded from preservation
+validation. No mod was deployed, no save was restored or rewritten by our tools,
+and no functional criterion is accepted from these observations.
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)
