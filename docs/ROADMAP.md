@@ -17,6 +17,8 @@ Estas etapas mostram a ordem do trabalho. Os sete grupos de pontos continuam med
 
 O Ghidra controlado pelo REA mantém sua própria sessão de análise. A janela aberta manualmente pelo participante não é automaticamente a sessão controlada pela ferramenta. A observação já realizada no jogo está registrada em [RESEARCH.md](RESEARCH.md); o [relatório inicial](validation/bootstrap-2026-10-20.md) registra o alcance dos testes.
 
+O [método de pesquisa e QA](WORKFLOW.md) acrescenta identificação após reinstalações, cópias de teste e automação planejada com clientes reais. Um cenário automatizado deverá exigir todos os clientes, comparar estado e falhar por timeout, crash ou resultado ausente. Os testes offline atuais continuam separados dessa integração; os critérios de quatro máquinas permanecem válidos.
+
 ## Marcos e condições para avançar
 
 | Marco | Evidência necessária |
@@ -75,6 +77,6 @@ A label `status:validation` identifica trabalho aguardando teste ou revisão de 
 
 Uma PR de aceitação altera `progress.json`, adiciona o relatório e executa `python tools/progress.py`. A mesma PR inclui README, PROGRESS e SVG gerados. `python tools/progress.py --check` confere tudo sem escrever arquivos.
 
-CI em PRs, `push` da branch principal e execução manual: compila/testa a infraestrutura no Windows e verifica o acompanhamento no Ubuntu. Permissões somente de leitura, sem PAT, credenciais Steam ou execução de Sekiro. Actions são fixadas por commit completo. Recomenda-se exigir PR e os checks para a branch principal; a revisão humana adicional depende de haver outro mantenedor disponível.
+CI em PRs, `push` da branch principal e execução manual: compila/testa a infraestrutura no Windows e verifica o acompanhamento no Ubuntu. Permissões somente de leitura, sem PAT, credenciais Steam ou execução de Sekiro. Actions são fixadas por commit completo. A branch principal exige PR e os dois checks; a revisão humana adicional depende de haver outro mantenedor disponível.
 
 Não subir código-fonte ou arquivos proprietários do jogo, dumps de memória ou binários de outros mods. O teste no jogo permanece local aos participantes, documentado no repositório.
