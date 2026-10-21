@@ -30,6 +30,10 @@ target_include_directories(skcoop_runtime PUBLIC include)
 target_compile_definitions(skcoop_runtime PRIVATE SKCOOP_RUNTIME_BUILD)
 target_link_libraries(skcoop_runtime PRIVATE skcoop_windows_options skcoop_core)
 
+add_library(skcoop_save_policy STATIC src/saves/save_policy.cpp)
+target_include_directories(skcoop_save_policy PUBLIC include)
+target_link_libraries(skcoop_save_policy PUBLIC skcoop_windows_options)
+
 add_executable(skcoop_launcher src/launcher/main.cpp)
 target_link_libraries(skcoop_launcher PRIVATE skcoop_launcher_support)
 add_dependencies(skcoop_launcher skcoop_runtime)
@@ -38,7 +42,11 @@ add_custom_target(skcoop_prepare_config ALL
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/config/game_profiles.ini"
     "$<TARGET_FILE_DIR:skcoop_launcher>/config/game_profiles.ini"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/save_profile.ini"
+    "$<TARGET_FILE_DIR:skcoop_launcher>/config/save_profile.ini"
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/config/game_profiles.ini"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/save_profile.ini"
   VERBATIM)
 add_dependencies(skcoop_launcher skcoop_prepare_config)
 
@@ -60,4 +68,9 @@ if(BUILD_TESTING)
   add_dependencies(skcoop_probe_tests skcoop_probe)
   add_test(NAME probe_policy_tests COMMAND skcoop_probe_tests "$<TARGET_FILE:skcoop_probe>")
   set_tests_properties(probe_policy_tests PROPERTIES TIMEOUT 15)
+
+  add_executable(skcoop_save_policy_tests tests/save_policy_tests.cpp)
+  target_link_libraries(skcoop_save_policy_tests PRIVATE skcoop_save_policy)
+  add_test(NAME save_path_policy_tests COMMAND skcoop_save_policy_tests)
+  set_tests_properties(save_path_policy_tests PROPERTIES TIMEOUT 15)
 endif()

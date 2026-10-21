@@ -39,11 +39,12 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 
 - Lançador próprio com identificação PE/SHA-256 e diagnóstico da DLL.
 - Runtime com ABI explícita, inicialização fora de `DllMain` e capacidades declaradas.
-- Núcleo independente para sessões, autoridade, checkpoints, eventos idempotentes e codec limitado, coberto por testes locais.
+- Núcleo independente para sessões, autoridade, checkpoints, eventos idempotentes e protocolo v2 com envelopes vinculados à sessão, coberto por testes locais.
+- Política de caminhos de save com extensão padrão `.co2`, conta preservada e tratamento de nomes de backup; ainda sem interceptação nativa ou gravação no jogo.
 - Sonda de pesquisa separada para observar um endereço candidato no Sekiro já aberto, somente com leitura e identidade exata do executável.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
-**Trabalho atual:** validar os pontos nativos de integração no jogo aberto. O próximo resultado de gameplay necessário é um personagem remoto real, visível e controlável. Os testes em memória não substituem esse resultado.
+**Trabalho atual:** ligar o carregamento e os saves separados à integração nativa, seguindo a experiência dos Seamless de DS1/DS2/DS3. A [política de saves](docs/SAVES.md) já possui testes isolados; as rotinas nativas de pasta, extensão e backup começaram a ser mapeadas. O personagem remoto real, visível e controlável continua sendo um resultado de gameplay necessário. Os testes em memória não substituem esse resultado.
 
 A observação local com RTTI identificou o tipo `WorldChrManImp` no endereço candidato. Isso ajuda a orientar a investigação; não valida o layout de personagens nem implementa um ator remoto. Veja a [pesquisa e suas limitações](docs/RESEARCH.md).
 

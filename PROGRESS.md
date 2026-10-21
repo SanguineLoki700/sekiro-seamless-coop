@@ -41,7 +41,7 @@ A label GitHub `status:validation` significa que o trabalho aguarda validação;
 - [ ] **core-native-runtime** — DLL e compatibilidade verificadas no jogo (3 pontos; Em andamento)
   - Aceitação: A DLL carrega no executável identificado e recusa versões sem suporte antes de aplicar hooks.
   - Validação mínima: 1 jogador(es), 1 máquina(s).
-- [ ] **core-save-isolation** — Saves do mod isolados e recuperáveis (4 pontos; Planejado)
+- [ ] **core-save-isolation** — Saves do mod isolados e recuperáveis (4 pontos; Em andamento)
   - Aceitação: Criar, salvar, atualizar e remover o mod preserva os saves normais; restauração de backup foi comprovada.
   - Validação mínima: 1 jogador(es), 1 máquina(s).
 

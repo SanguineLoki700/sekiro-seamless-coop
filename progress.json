@@ -78,7 +78,7 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/3",
           "label": "Saves do mod isolados e recuperáveis",
           "weight": 4,
-          "status": "planned",
+          "status": "in_progress",
           "min_players": 1,
           "min_machines": 1,
           "acceptance": "Criar, salvar, atualizar e remover o mod preserva os saves normais; restauração de backup foi comprovada.",

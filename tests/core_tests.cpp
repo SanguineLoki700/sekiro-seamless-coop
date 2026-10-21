@@ -47,6 +47,20 @@ void put16(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint16_t value
 void put32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
     for (std::size_t i = 0; i < 4; ++i) bytes.at(at + i) = static_cast<std::uint8_t>(value >> (i * 8));
 }
+SessionId incarnation(std::uint8_t first = 0x51) {
+    SessionId value{};
+    value[0] = first;
+    value[15] = 0xa7;
+    return value;
+}
+// The original non-session-specific cases share one declared test incarnation.
+// These conveniences are test-local; the public codec has no one-argument API.
+EncodeResult encode(const WireMessage& message) {
+    return skcoop::core::encode(message, incarnation());
+}
+DecodeResult decode(std::span<const std::uint8_t> bytes) {
+    return skcoop::core::decode(bytes, incarnation());
+}
 void roundtrip(const WireMessage& message) {
     const auto packet = encode(message);
     require(static_cast<bool>(packet), "valid message must encode");
@@ -232,7 +246,8 @@ void wire_golden_little_endian() {
     auto value = checkpoint(0x0102030405060708ULL);
     value.state_sha256.fill(0xa5);
     std::vector<std::uint8_t> golden{
-        'S', 'K', 'C', '1', 1, 0, 4, 0, 56, 0, 0, 0,
+        'S', 'K', 'C', '1', 2, 0, 4, 0, 56, 0, 0, 0,
+        0x51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xa7,
         0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         8, 7, 6, 5, 4, 3, 2, 1
     };
@@ -287,6 +302,75 @@ void wire_mutation_boundaries() {
     }
 }
 
+void cross_session_snapshot_replay() {
+    // Session A emitted a high sequence number before the host restarted.
+    auto stale = snapshot(1, 900);
+    stale.entities[0].hit_points = 1;
+    const auto previous_session = incarnation(0x51);
+    const auto current_session = incarnation(0x52);
+    const auto packet_from_previous_session = skcoop::core::encode(stale, previous_session);
+    require(static_cast<bool>(packet_from_previous_session), "old-session fixture did not encode");
+
+    // Session B restarts counters on the same host/map. This is legitimate new state.
+    SnapshotStore current_world(1001);
+    require(current_world.begin_area(100, 1), "new session could not initialize its area");
+    require(current_world.apply(snapshot(1, 1), 1001) == SnapshotResult::applied, "new session seed failed");
+    const auto replay = skcoop::core::decode(packet_from_previous_session.bytes, current_session);
+    require(replay.error == WireError::wrong_session && !replay,
+            "previous session packet crossed the envelope boundary");
+    if (replay) {
+        require(current_world.apply(std::get<Snapshot>(*replay.message), 1001) != SnapshotResult::applied,
+                "old-session snapshot was accepted after counters restarted");
+    }
+    require(current_world.sequence() == 1 && current_world.entities()[0].hit_points == 100,
+            "old-session replay changed the new world's state");
+}
+
+void session_envelopes_and_durable_resume() {
+    const auto previous_session = incarnation(0x51);
+    const auto current_session = incarnation(0x52);
+    const std::array<WireMessage, 4> kinds{hello(1002), snapshot(), reward(), checkpoint(1)};
+    for (const auto& message : kinds) {
+        const auto packet = skcoop::core::encode(message, previous_session);
+        const auto queued = skcoop::core::decode(packet.bytes, previous_session);
+        require(packet && queued && queued.matches_session(previous_session), "active session rejected its own envelope");
+        require(!queued.matches_session(current_session) && !queued.matches_session(SessionId{}),
+                "decoded queued message lost its original session stamp");
+        require(skcoop::core::decode(packet.bytes, current_session).error == WireError::wrong_session,
+                "a message kind bypassed cross-session rejection");
+        require(skcoop::core::encode(message, SessionId{}).error == WireError::invalid_session,
+                "zero outbound session ID accepted");
+        require(skcoop::core::decode(packet.bytes, SessionId{}).error == WireError::invalid_session,
+                "unset expected session accepted");
+    }
+    auto bytes = skcoop::core::encode(snapshot(), previous_session).bytes;
+    auto last_byte_changed = previous_session;
+    last_byte_changed[15] ^= 1;
+    require(skcoop::core::decode(bytes, last_byte_changed).error == WireError::wrong_session,
+            "only part of the session ID was compared");
+    std::fill_n(bytes.begin() + 12, 16, std::uint8_t{0});
+    require(skcoop::core::decode(bytes, previous_session).error == WireError::invalid_session,
+            "zero wire session ID accepted");
+    bytes = skcoop::core::encode(snapshot(), previous_session).bytes;
+    put16(bytes, 4, 1);
+    require(skcoop::core::decode(bytes, previous_session).error == WireError::unsupported_protocol,
+            "legacy protocol version accepted under the new layout");
+
+    // Persistence belongs to the campaign, not to the transient network envelope.
+    DurableLedger before(campaign(), 1001);
+    require(before.apply(reward(), 1001) == EventResult::applied, "resume seed failed");
+    DurableLedger resumed(campaign(), 1001);
+    require(resumed.restore(checkpoint(1), before.events()), "new incarnation could not restore campaign receipts");
+    const auto old_event = skcoop::core::encode(reward(), previous_session);
+    require(skcoop::core::decode(old_event.bytes, current_session).error == WireError::wrong_session,
+            "old durable packet accepted after resume");
+    const auto fresh_envelope = skcoop::core::encode(reward(), current_session);
+    const auto retried = skcoop::core::decode(fresh_envelope.bytes, current_session);
+    require(retried && resumed.apply(std::get<DurableEvent>(*retried.message), 1001) == EventResult::duplicate,
+            "new envelope lost campaign-level idempotence");
+    require(resumed.reward_balance(1002) == 10 && resumed.revision() == 1, "resume duplicated reward");
+}
+
 void four_peer_offline_scenario() {
     SessionRoster session(1001, build(), checkpoint());
     std::vector<SnapshotStore> worlds;
@@ -328,7 +412,7 @@ void four_peer_offline_scenario() {
 } // namespace
 
 int main() {
-    const std::array<std::pair<std::string_view, std::function<void()>>, 12> tests{{
+    const std::array<std::pair<std::string_view, std::function<void()>>, 14> tests{{
         {"handshake_identity", handshake_identity},
         {"roster_capacity_and_rejoin", roster_capacity_and_rejoin},
         {"checkpoint_reconnection", checkpoint_reconnection},
@@ -340,6 +424,8 @@ int main() {
         {"wire_golden_little_endian", wire_golden_little_endian},
         {"wire_rejects_malformed", wire_rejects_malformed},
         {"wire_mutation_boundaries", wire_mutation_boundaries},
+        {"cross_session_snapshot_replay", cross_session_snapshot_replay},
+        {"session_envelopes_and_durable_resume", session_envelopes_and_durable_resume},
         {"four_peer_offline_scenario", four_peer_offline_scenario}
     }};
     std::size_t failures{};
