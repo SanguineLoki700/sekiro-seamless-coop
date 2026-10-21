@@ -44,6 +44,8 @@ São recusados caminhos relativos, UNC, nomes de dispositivo e namespaces estend
 
 O componente independente [CoOpSaveStore](SAVE_STORE.md) implementa I/O limitado a um diretório co-op explícito, com verificações por handles, gravação em arquivo temporário, substituição do primário, backup e restauração explícitos. Ele recebe bytes opacos e foi projetado para perfis separados em NTFS. A decisão lexical e o armazenamento ainda não estão conectados ao jogo; o modo `same_account_directory` da política não é suportado por esse armazenamento.
 
+A [SaveProfileBridge](SAVE_BRIDGE.md) conecta configuração, política e armazenamento em um único perfil. Fixa a conta na abertura e revalida origem e contexto a cada operação; deriva a árvore protegida da raiz solo declarada. Seus testes integrados preservam arquivos-semente solo. A ponte ainda não é um hook, autenticação de processo ou adaptador do formato nativo.
+
 Hooks, ligação com chamadas nativas de Sekiro, importação, conversão de conteúdo, migração e política de Steam Cloud permanecem pendentes. O campo `SaveFileKind::backup` na política somente identifica o nome `.bak`; a operação física pertence ao armazenamento separado. Seus testes temporários não comprovam salvar/carregar Sekiro com o mod.
 
 ## Testes
