@@ -157,11 +157,17 @@ int smoke_parent(const fs::path& runtime, const fs::path& launcher) {
     require(run_controlled_child(launcher, {L"--launch", valid.wstring(), L"--profiles", ini.wstring()}) == 20, "Default launch guard failed.");
     write(ini, profile(identity.sha256, true, true));
     require(run_controlled_child(launcher, {L"--launch", valid.wstring(), L"--profiles", ini.wstring()}) == 21, "Profile flags enabled unimplemented gameplay.");
+    const auto save_ini = temp.file(L"save profile 日本.ini");
+    write(save_ini, std::string("[SAVE]\nsave_file_extension=co2\ndestination_mode=separate_profile\ncoop_profile_root=\n"));
+    require(run_controlled_child(launcher, {L"--inspect-save-profile", save_ini.wstring()}) == 0, "Save settings inspection failed.");
+    write(save_ini, std::string("[SAVE]\nsave_file_extension=sl2\ndestination_mode=separate_profile\ncoop_profile_root=\n"));
+    require(run_controlled_child(launcher, {L"--inspect-save-profile", save_ini.wstring()}) == 1, "Vanilla save extension accepted by launcher.");
+    require(run_controlled_child(launcher, {L"--inspect-save-profile", temp.file(L"missing.ini").wstring()}) == 1, "Missing save settings accepted.");
     const auto unicode_runtime = temp.file(L"runtime teste 日本.dll");
     require(CopyFileW(fs::absolute(runtime).c_str(), unicode_runtime.c_str(), TRUE), "Cannot prepare Unicode runtime fixture.");
     const auto child_exe = executable_directory() / L"skcoop_windows_smoke.exe";
     require(run_controlled_child(child_exe, {L"--child", unicode_runtime.wstring()}) == 0, "Controlled runtime child failed.");
-    std::cout << "Windows smoke passed: SHA-256, PE rejection, exact profiles, launch refusal, Unicode child and runtime ABI.\n";
+    std::cout << "Windows smoke passed: SHA-256, PE rejection, exact profiles, save settings, launch refusal, Unicode child and runtime ABI.\n";
     return 0;
 }
 }

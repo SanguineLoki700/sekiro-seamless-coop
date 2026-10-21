@@ -32,7 +32,9 @@ O save primário e seu backup ficam no mesmo diretório de conta. Contas distint
 
 O modo `same_account_directory` é um opt-in separado. Ele exige que as duas raízes explícitas sejam iguais pela comparação Windows e propõe somente a extensão alternativa no diretório original da conta. Isso prepara uma possibilidade de integração futura; não demonstra que o jogo já aceite essa extensão. Nenhum dos modos move ou importa o save solo.
 
-`extension` aceita de 1 a 120 caracteres ASCII alfanuméricos, sem ponto inicial. `sl2` é proibida em qualquer combinação de maiúsculas/minúsculas. O padrão `co2` reproduz uma escolha de configuração observada nos pacotes Seamless de referência, sem afirmar como seu redirecionamento interno funciona. `config/save_profile.ini` registra `[SAVE] save_file_extension=co2` e mantém a raiz vazia até configuração explícita; o campo C++ continua `extension` e o módulo não implementa um parser INI.
+`extension` aceita de 1 a 120 caracteres ASCII alfanuméricos, sem ponto inicial. `sl2` é proibida em qualquer combinação de maiúsculas/minúsculas. O padrão `co2` reproduz uma escolha de configuração observada nos pacotes Seamless de referência, sem afirmar como seu redirecionamento interno funciona. `config/save_profile.ini` registra `[SAVE] save_file_extension=co2` e mantém a raiz vazia até configuração explícita; o campo C++ continua `extension`.
+
+O componente `save_settings` lê esse INI com UTF-8 estrito, limite de 64 KiB, uma seção `[SAVE]` e exatamente as três chaves documentadas. Recusa duplicatas, chaves desconhecidas, caminhos ambíguos e a extensão solo. Raiz vazia é configuração incompleta, nunca autorização para iniciar o jogo. O comando `skcoop_launcher --inspect-save-profile [ini]` verifica somente essa configuração, sem abrir saves ou processos de jogo.
 
 ## Rejeições e limite de segurança
 
@@ -40,7 +42,9 @@ São recusados caminhos relativos, UNC, nomes de dispositivo e namespaces estend
 
 **A validação lexical não é um sandbox de acesso a arquivos.** Ela não resolve reparse points, junctions, symlinks, hardlinks, aliases 8.3 ou mudanças entre verificação e abertura. Um caminho aparentemente separado pode apontar ao mesmo armazenamento. Antes de qualquer I/O real, o adaptador deve validar os destinos por handles, rejeitar redirecionamentos inesperados e comprovar isolamento dos saves, perfis e Steam Cloud. Não escrever através de hardlinks compartilhados. Se um caminho vier de um hook de API mais permissivo, rejeitá-lo nessa política exige tratamento explícito; não usar uma normalização genérica para contornar a recusa.
 
-Hooks, ligação com chamadas nativas de Sekiro, importação, conversão de conteúdo, backup/restauração de arquivos, migração e política de Steam Cloud permanecem pendentes. O campo `SaveFileKind::backup` somente identifica o nome `.bak`; não implementa uma operação de backup.
+O componente independente [CoOpSaveStore](SAVE_STORE.md) implementa I/O limitado a um diretório co-op explícito, com verificações por handles, gravação em arquivo temporário, substituição do primário, backup e restauração explícitos. Ele recebe bytes opacos e foi projetado para perfis separados em NTFS. A decisão lexical e o armazenamento ainda não estão conectados ao jogo; o modo `same_account_directory` da política não é suportado por esse armazenamento.
+
+Hooks, ligação com chamadas nativas de Sekiro, importação, conversão de conteúdo, migração e política de Steam Cloud permanecem pendentes. O campo `SaveFileKind::backup` na política somente identifica o nome `.bak`; a operação física pertence ao armazenamento separado. Seus testes temporários não comprovam salvar/carregar Sekiro com o mod.
 
 ## Testes
 

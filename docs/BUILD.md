@@ -20,13 +20,14 @@ ctest --preset windows-debug
 Release equivalents are `windows-release` for build/test. Binaries are under
 `build/msvc/bin/Debug` or `Release`. MSVC's runtime library is linked statically.
 The core tests register themselves through `src/core`. CTest also registers
-Windows runtime smoke tests, probe policy tests and save-path policy tests.
-The save policy runs only against controlled temporary fixtures; it does not
-install a game hook. See [SAVES.md](SAVES.md).
+Windows runtime smoke tests, probe policy tests, save-path policy tests,
+save-settings tests and save-storage tests: six CTest suites in total.
+Save storage runs only against controlled temporary fixtures; it does not
+install a game hook. See [SAVES.md](SAVES.md) and [SAVE_STORE.md](SAVE_STORE.md).
 
 The build copies `config/save_profile.ini` beside `game_profiles.ini`. Its
-`[SAVE] save_file_extension=co2` records the intended namespace; an INI reader
-and native save interception are not implemented by that file. Gameplay flags
+`[SAVE] save_file_extension=co2` records the intended namespace. A strict UTF-8
+INI reader validates settings; native save interception is still pending. Gameplay flags
 remain disabled. Wire protocol 2 now requires an explicit nonzero session ID
 for every encoded or decoded envelope; see [PROTOCOL.md](PROTOCOL.md).
 
@@ -36,6 +37,7 @@ for every encoded or decoded envelope; see [PROTOCOL.md](PROTOCOL.md).
 .\build\msvc\bin\Debug\skcoop_launcher.exe --self-test
 .\build\msvc\bin\Debug\skcoop_launcher.exe --diagnose
 .\build\msvc\bin\Debug\skcoop_launcher.exe --inspect "C:\path\to\sekiro.exe"
+.\build\msvc\bin\Debug\skcoop_launcher.exe --inspect-save-profile
 ```
 
 `--self-test` starts only our own smoke-test executable. That test uses an owned
@@ -43,6 +45,8 @@ temporary directory, synthetic PE fixtures, and a controlled child that loads ou
 runtime DLL from a path with spaces and Unicode. It checks the SHA-256 known
 vector, malformed/32-bit/managed/DLL rejection, strict profile parsing, launch
 refusal even if profile flags are set, and explicit ABI initialization/shutdown.
+It also checks save-settings inspection with a Unicode configuration path,
+rejection of the solo extension and missing configuration errors.
 The temporary fixtures are never executed. Only our diagnostic programs run.
 If built with `BUILD_TESTING=OFF`, `--self-test` is unavailable because its helper
 is not built; use `--diagnose` instead.
@@ -60,6 +64,11 @@ explicitly initializes diagnostic mode after `LoadLibraryExW` returns. An explic
 This executes the selected library; use this option only for a trusted local
 build. It is not an arbitrary-game inspection option. DLL dependencies use the
 DLL directory and default Windows loader directories, not the current directory.
+
+`--inspect-save-profile [ini]` reads only the selected configuration, or the
+sibling `config/save_profile.ini` by default. It reports syntax, extension, mode
+and whether a root was supplied. A configured root is not a verified directory
+or save-isolation capability. This command does not open saves or game processes.
 
 ## Profiles and refusal behavior
 
