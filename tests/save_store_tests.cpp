@@ -26,8 +26,28 @@ struct NativeHandle {
     HANDLE value{INVALID_HANDLE_VALUE};
     ~NativeHandle() { if (value != nullptr && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
+fs::path canonical_temporary_parent() {
+    const auto requested = fs::temp_directory_path();
+    NativeHandle handle{CreateFileW(requested.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+    require(handle.value != INVALID_HANDLE_VALUE, "cannot inspect temporary parent");
+    const auto needed = GetFinalPathNameByHandleW(handle.value, nullptr, 0, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    require(needed > 0 && needed < 32768, "temporary parent canonical name unavailable");
+    std::wstring resolved(needed, L'\0');
+    const auto length = GetFinalPathNameByHandleW(handle.value, resolved.data(), needed,
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    require(length > 0 && length < needed, "temporary parent canonical name failed");
+    resolved.resize(length);
+    require(resolved.starts_with(L"\\\\?\\") && resolved.size() >= 7 && resolved[5] == L':',
+        "temporary fixtures require a local drive");
+    resolved.erase(0, 4);
+    return fs::path(resolved).lexically_normal();
+}
 struct Fixture {
-    fs::path parent = fs::temp_directory_path().lexically_normal();
+    // Hosted Windows runners may expose TEMP through a RUNNER~1 alias. Fixtures
+    // use the actual directory name; production alias refusal stays unchanged.
+    fs::path parent = canonical_temporary_parent();
     fs::path root;
     Fixture() {
         require(parent.is_absolute(), "temporary parent is not absolute");
@@ -71,6 +91,8 @@ void no_staging(const Fixture& fixture) {
 void write_backup_restore_exact_bytes() {
     Fixture fixture;
     auto opened = CoOpSaveStore::open(fixture.config());
+    if (!opened) std::cerr << "Store open error=" << static_cast<int>(opened.status.error)
+                          << " system=" << opened.status.system_error << '\n';
     require(static_cast<bool>(opened), "store open failed");
     auto first = opened.store->write(v1);
     require(first && first.primary_committed && !first.backup_committed, "first write status incorrect");
