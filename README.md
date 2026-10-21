@@ -44,7 +44,7 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 - Sonda de pesquisa separada para observar um endereço candidato no Sekiro já aberto, somente com leitura e identidade exata do executável.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
-**Trabalho atual:** ligar o carregamento e os saves separados à integração nativa, seguindo a experiência dos Seamless de DS1/DS2/DS3. A [política de saves e configuração](docs/SAVES.md) e o [armazenamento com backup/restauração](docs/SAVE_STORE.md) possuem testes em arquivos temporários; as rotinas nativas de pasta, extensão e backup começaram a ser mapeadas. Esses componentes ainda não interceptam os saves do jogo. O personagem remoto real, visível e controlável continua sendo um resultado de gameplay necessário. Os testes em memória não substituem esse resultado.
+**Trabalho atual:** ligar o carregamento e os saves separados à integração nativa, seguindo a experiência dos Seamless de DS1/DS2/DS3. A [ponte de perfil](docs/SAVE_BRIDGE.md) já conecta configuração, política de caminhos e armazenamento com backup/restauração, com testes em arquivos temporários. A pesquisa também identificou mais do caminho nativo de leitura, conta e stream. Esses componentes ainda não interceptam os saves do jogo. O personagem remoto real, visível e controlável continua sendo um resultado de gameplay necessário. Os testes em memória não substituem esse resultado.
 
 A observação local com RTTI identificou o tipo `WorldChrManImp` no endereço candidato. Isso ajuda a orientar a investigação; não valida o layout de personagens nem implementa um ator remoto. Veja a [pesquisa e suas limitações](docs/RESEARCH.md).
 

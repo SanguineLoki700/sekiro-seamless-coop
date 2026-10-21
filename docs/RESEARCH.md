@@ -189,6 +189,60 @@ the normal save and backup differed; that window is excluded from preservation
 validation. No mod was deployed, no save was restored or rewritten by our tools,
 and no functional criterion is accepted from these observations.
 
+## Save boundary follow-up, 2026-10-21
+
+A subsequent original-game Steam launch supported four focused read-only
+queries against the same exact executable hash. Each rechecked a retained
+349-byte code anchor before interpreting new instructions. The new queries
+read 3,239 bytes of selected code in total, plus bounded exception metadata
+and repeated anchors; no whole-text rescan, heap/save-content inspection,
+native calls, injection or hook installation was performed by those queries.
+Private save backups were prepared separately before the original launch;
+they are not evidence of mod save isolation or an in-game save test.
+
+| Candidate RVA | Refined observation |
+|---|---|
+| `0x11b2b30` | Calls the `SteamUser` import at IAT RVA `0x292a140`, dispatches virtual offset `0x10`, and formats an eight-byte result. The matching static UTF-16 format at RVA `0x2bd0610` is `%I64d`. This supports Steam-interface-derived account formatting, not authenticated profile binding. |
+| `0x1cc85b0` | A 48-byte explicit window exposes an argument-shuffling tail jump to `0x1cc8100`; absence from the unwind inventory did not mean absence of code. The complete window includes neighboring stubs/padding. |
+| `0x1cc8100` | Opens a stream, requires an exact 64-byte header read, parses it, then seeks and reads a larger blob. A later call to `0x1a07620` has unresolved effects: the entire routine must not be assumed read-only or called experimentally from this evidence. |
+| `0x1cbc180` | The observed leaf instructions obtain string data from an object at `this + 0xe0`. The retained 48-byte window ends inside a neighboring instruction, so it was excluded from the complete-byte replay. This is not a callable ABI contract. |
+| `0x1a0e200`, `0x1a0e2a0` | Stream construction and opening. The open routine delegates through `0x1a0cf40` to a backend virtual slot at offset `0xa0`; it does not directly establish a `CreateFileW` boundary. |
+| `0x2dcc620` | Static stream vtable whose MSVC locator self-RVA validates and whose type name is `.?AVDLFileInputStream@DLIO@@`. Slots `0x18`, `0x38`, `0x68` point to RVAs `0x1a0e3a0`, `0x1a0e570`, `0x1a0e600`, respectively. The concrete lower backend remains separate. |
+
+The later path excerpts refine that separation: `0x1a0cf40` selects a pointer
+from the path object, while `0x1a0d5e0` prepares a UTF-16 path and calls
+`0x1a0cc30`. Its eventual true return is not evidence that a file was opened
+successfully. The stream RTTI must not be substituted for the unknown backend
+type or used to invent the latter's callable ABI.
+
+### Focused Ghidra replay
+
+REA/Ghidra 12.1.4 analyzed a private **synthetic analysis PE**, SHA-256
+`7eacd6b54716237b4b8030a21c99b43271fb97dd2a41fda34e11dd1a9ceaafb2`.
+It contains 23 complete, hash-checked retained code intervals at their original
+RVAs and explicitly synthetic padding/export metadata. Incomplete or absent
+intervals were excluded. It has no original imports, unwind, `.rdata` or whole
+game image and was never executed. The final path-resolution reads happened
+after its construction and are not part of this replay.
+
+Retained dossier IDs: account formatter
+`ev_90ce98bcd9c951eb58b82a6b916011de81aaf967f8566a31a673c59c491dfdfe`,
+read-path candidate
+`ev_a0622812c4bf252b9225ab0aaef40b585252f4cb0b4a397df43969b86c391ecc`,
+and stream-open candidate
+`ev_a75ca4f06e6373bfe5b9f96fc2a0e2979871fba6b006200ecf9c79ad0403d737`.
+These are derived historical-code observations in a partial reconstructed
+image, not original source or traces of execution. Inferred signatures,
+missing callees, indirect dispatch and function coverage remain unresolved;
+the read-path and stream-open dossiers report 35 and 7 unresolved calls.
+The Evidence and analysis snapshot were retained privately and the owned
+Ghidra session was closed.
+
+The next observation must identify actual save I/O and initialization timing
+before a hook can be enabled. Normal-game file tracing and controlled fixture
+tests are separate from a modified-game preservation test; neither awards
+functional points by itself.
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)

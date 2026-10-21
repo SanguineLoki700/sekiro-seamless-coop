@@ -21,9 +21,10 @@ Release equivalents are `windows-release` for build/test. Binaries are under
 `build/msvc/bin/Debug` or `Release`. MSVC's runtime library is linked statically.
 The core tests register themselves through `src/core`. CTest also registers
 Windows runtime smoke tests, probe policy tests, save-path policy tests,
-save-settings tests and save-storage tests: six CTest suites in total.
+save-settings tests, save-storage tests and save-profile bridge tests: seven CTest suites in total.
 Save storage runs only against controlled temporary fixtures; it does not
-install a game hook. See [SAVES.md](SAVES.md) and [SAVE_STORE.md](SAVE_STORE.md).
+install a game hook. See [SAVES.md](SAVES.md), [SAVE_STORE.md](SAVE_STORE.md)
+and [SAVE_BRIDGE.md](SAVE_BRIDGE.md).
 
 The build copies `config/save_profile.ini` beside `game_profiles.ini`. Its
 `[SAVE] save_file_extension=co2` records the intended namespace. A strict UTF-8
