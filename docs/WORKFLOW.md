@@ -46,6 +46,8 @@ O anfitrião continua responsável pelos inimigos. Antes de conectar o transport
 
 O guia de [autoridade com epochs](https://github.com/cranebeaker/coop-anything/blob/bebd4948b8ee379549e46fc813819cd02dca5e1b/playbook/actor-ownership.md) ajuda a definir essas verificações. Delegar IA ao cliente mais próximo, transferir autoridade entre clientes e migrar o anfitrião não pertencem à v1 atual. Geração de carregamento, identidade da sessão e época de uma eventual transferência de autoridade são conceitos diferentes.
 
+O [codec v2](PROTOCOL.md) já exige a identidade da sessão em todos os envelopes e possui regressões de replay entre encarnações. O transporte real ainda deverá fornecer o contexto ativo por um caminho confiável e revalidar mensagens enfileiradas após mudança de sessão; a identidade declarada no pacote não é autenticação Steam.
+
 ## Situação após a revisão
 
 REA e Co-op Anything responderam às consultas. O REA informou Ghidra 12.1.4 disponível. A instalação reinstalada manteve build Steam 5794815, versão 1.6.0.0 e o SHA-256 anteriormente registrado; a cópia privada do executável foi conferida. O inventário observado não encontrou os marcadores de complementos pesquisados, mas não foi uma auditoria completa dos depots Steam. O jogo estava fechado; nenhum teste em execução foi realizado nesta revisão. Veja [RESEARCH.md](RESEARCH.md).
