@@ -1,6 +1,7 @@
 #include "preflight.h"
 #include "process.h"
 #include "runtime_loader.h"
+#include "skcoop/save_settings.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -9,6 +10,7 @@ void usage() {
     std::wcout << L"Sekiro co-op 0.0.1-bootstrap diagnostic scaffold (gameplay is unavailable)\n"
         L"  --inspect <exe> [--profiles <ini>]  Read PE headers and SHA-256; never launch\n"
         L"  --diagnose [--runtime <dll>]       Load the selected diagnostic DLL locally\n"
+        L"  --inspect-save-profile [ini]      Validate settings; no save/game access\n"
         L"  --self-test                       Run only our controlled smoke-test child\n"
         L"  --launch <exe> [--profiles <ini>]  Preflight, then refuse (not implemented)\n";
 }
@@ -19,6 +21,17 @@ int wmain(int argc, wchar_t** argv) {
         if (argc == 1 || (argc == 2 && std::wstring_view(argv[1]) == L"--help")) { usage(); return 0; }
         const std::wstring command = argv[1];
         const auto folder = executable_directory();
+        if (command == L"--inspect-save-profile") {
+            if (argc != 2 && argc != 3) throw std::runtime_error("Invalid save profile arguments.");
+            const auto path = argc == 3 ? std::filesystem::path(argv[2]) : folder / L"config" / L"save_profile.ini";
+            const auto settings = skcoop::saves::read_save_settings(path);
+            std::wcout << L"Save profile syntax: valid\nExtension: " << settings.extension
+                << L"\nDestination mode: "
+                << (settings.mode == skcoop::saves::DestinationMode::separate_profile ? L"separate_profile" : L"same_account_directory")
+                << L"\nProfile root: " << (settings.coop_profile_root.empty() ? L"not configured" : L"configured")
+                << L"\nNative save interception: not implemented\nNo save or game process was opened.\n";
+            return 0;
+        }
         if (command == L"--self-test" && argc == 2) {
             const auto result = run_controlled_child(folder / L"skcoop_windows_smoke.exe",
                 {L"--runtime", (folder / L"skcoop_runtime.dll").wstring(), L"--launcher", (folder / L"skcoop_launcher.exe").wstring()});
