@@ -1,0 +1,3 @@
+LIBRARY skcoop_save_bootstrap
+EXPORTS
+    DetourFinishHelperProcess @1

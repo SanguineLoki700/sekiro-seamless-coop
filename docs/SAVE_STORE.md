@@ -1,6 +1,6 @@
 # Armazenamento de saves em diretório controlado
 
-`CoOpSaveStore` implementa I/O real de bytes opacos em **Windows x64/NTFS**, limitado a um diretório cooperativo existente e a uma árvore protegida existente, ambos fornecidos explicitamente. Não procura AppData, não descobre saves, não importa o solo e não instala hooks no jogo. O adaptador de Sekiro e a capacidade de saves isolados do runtime continuam pendentes.
+`CoOpSaveStore` implementa I/O real de bytes opacos em **Windows x64/NTFS**, limitado a um diretório cooperativo existente e a uma árvore protegida existente, ambos fornecidos explicitamente. Não procura AppData, não descobre saves, não importa o solo e não instala hooks no jogo. O [adaptador nativo](NATIVE_SAVE_IO.md) utiliza também seus métodos de handles, consulta, remoção e cópia; essa integração passou por testes locais em Sekiro. A capacidade do runtime público continua desativada até a integração do fluxo no pacote.
 
 ## Interface e nomes
 
@@ -31,6 +31,8 @@ A escrita cria um staging interno exclusivo com `CREATE_NEW`/`FILE_CREATE`, veri
 O flush antecede o rename de namespace. Isso não promete persistência de todos os metadados após perda de energia, transação entre arquivos ou recuperação automática de qualquer crash. Erros de alocação C++ podem propagar; a futura fronteira de hook precisa capturá-los e falhar sem fallback solo.
 
 ## Validação controlada
+
+`open_native`, `query_native`, `remove_native` e `copy_native` preservam handles/posição de arquivo e o contrato limitado documentado no [adaptador](NATIVE_SAVE_IO.md). A validação antecede truncamento e remoção. O controller deve sobreviver aos handles; contenção retorna sharing violation. Cópia nativa malsucedida pode modificar o destino existente e sinaliza `destination_may_be_modified`. O commit por staging descrito acima pertence à API de snapshots completos, não a cada escrita parcial do jogo.
 
 Os testes usam somente diretórios temporários exclusivos e arquivos-semente sintéticos. Cobrem bytes v1/v2, backup sem sobrescrita implícita, restore, primário vazio reaberto para recuperação, limites de leitura, aliases, sobreposição física, hardlinks para uma árvore protegida, lock em outro processo e falha real de rename causada por um handle que não compartilha delete. Essa falha também testa limpeza de staging e resultado parcial após confirmar backup.
 

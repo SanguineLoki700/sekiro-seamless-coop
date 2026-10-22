@@ -36,6 +36,7 @@ public:
     }
     explicit operator bool() const noexcept { return value_ != nullptr && value_ != INVALID_HANDLE_VALUE; }
     HANDLE get() const noexcept { return value_; }
+    HANDLE release() noexcept { return std::exchange(value_, INVALID_HANDLE_VALUE); }
 private:
     HANDLE value_{INVALID_HANDLE_VALUE};
 };
@@ -181,7 +182,7 @@ struct NativeApi {
 const NativeApi& native() { static const NativeApi value; return value; }
 
 SaveStoreStatus open_child(HANDLE directory, std::wstring_view name, ACCESS_MASK access,
-                          ULONG share, ULONG disposition, Handle& output) {
+                          ULONG share, ULONG disposition, Handle& output, ULONG_PTR* information = nullptr) {
     UNICODE_STRING filename{};
     filename.Buffer = const_cast<PWSTR>(name.data());
     filename.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
@@ -203,6 +204,7 @@ SaveStoreStatus open_child(HANDLE directory, std::wstring_view name, ACCESS_MASK
         return fail(SaveStoreError::io_error, error);
     }
     output = Handle(raw);
+    if (information) *information = io.Information;
     return {};
 }
 
@@ -325,6 +327,58 @@ struct CoOpSaveStore::Impl {
     std::wstring backup;
     std::mutex mutex;
 
+    NativeSaveOpenResult native_open(SaveFileKind kind, const NativeSaveOpenRequest& request) {
+        const auto refusal = [](DWORD error) {
+            return NativeSaveOpenResult{fail(SaveStoreError::invalid_configuration, error), nullptr, error, false};
+        };
+        if (kind != SaveFileKind::primary && kind != SaveFileKind::backup) return refusal(ERROR_INVALID_PARAMETER);
+        const DWORD access = request.desired_access;
+        if ((access & ~(GENERIC_READ | GENERIC_WRITE)) != 0 ||
+            (request.share_mode & ~(FILE_SHARE_READ | FILE_SHARE_WRITE)) != 0 ||
+            request.security_attributes_present || request.template_file_present)
+            return refusal(ERROR_NOT_SUPPORTED);
+        if (request.flags_and_attributes != FILE_ATTRIBUTE_NORMAL &&
+            !(request.flags_and_attributes == (FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS) && access == 0))
+            return refusal(ERROR_NOT_SUPPORTED);
+        ULONG disposition{};
+        switch (request.creation_disposition) {
+        case CREATE_NEW: disposition = 2; break; // FILE_CREATE
+        case OPEN_EXISTING: case TRUNCATE_EXISTING: disposition = 1; break; // FILE_OPEN
+        case CREATE_ALWAYS: case OPEN_ALWAYS: disposition = 3; break; // FILE_OPEN_IF, never initial truncation
+        default: return refusal(ERROR_INVALID_PARAMETER);
+        }
+        const bool truncate = request.creation_disposition == CREATE_ALWAYS || request.creation_disposition == TRUNCATE_EXISTING;
+        if (truncate && !(access & GENERIC_WRITE)) return refusal(ERROR_INVALID_PARAMETER);
+        const auto& name = kind == SaveFileKind::primary ? primary : backup;
+        Handle file;
+        ULONG_PTR information{};
+        auto status = open_child(coop.leaf(), name, access | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                                 request.share_mode, disposition, file, &information);
+        if (!status) {
+            if (request.creation_disposition == CREATE_NEW && status.system_error == ERROR_ALREADY_EXISTS)
+                status.system_error = ERROR_FILE_EXISTS;
+            return {status, nullptr, status.system_error, false};
+        }
+        std::uint64_t size{};
+        status = inspect_file(file.get(), coop.path + L"\\" + name, false, size);
+        if (!status) {
+            if (!status.system_error) status.system_error = ERROR_ACCESS_DENIED;
+            return {status, nullptr, status.system_error, false};
+        }
+        if (truncate) {
+            FILE_END_OF_FILE_INFO end{};
+            if (!SetFileInformationByHandle(file.get(), FileEndOfFileInfo, &end, sizeof(end))) {
+                const auto error = GetLastError();
+                return {fail(SaveStoreError::io_error, error), nullptr, error, false};
+            }
+        }
+        const bool created = information == 2; // FILE_CREATED from NtCreateFile's IO_STATUS_BLOCK.
+        DWORD last_error = ERROR_SUCCESS;
+        if (!created && (request.creation_disposition == OPEN_ALWAYS || request.creation_disposition == CREATE_ALWAYS))
+            last_error = ERROR_ALREADY_EXISTS;
+        return {{}, file.release(), last_error, created};
+    }
+
     SaveStoreStatus inspect(std::wstring_view name, CheckedFile& file, bool bounded) {
         auto opened = open_child(coop.leaf(), name, GENERIC_READ | SYNCHRONIZE, FILE_SHARE_READ, 1u, file.handle);
         if (!opened && opened.error == SaveStoreError::missing_file) return {};
@@ -419,6 +473,114 @@ SaveStoreStatus CoOpSaveStore::restore_backup(std::optional<std::size_t> expecte
     status = atomic_write(impl_->coop.leaf(), impl_->coop.path, impl_->primary, recovery.bytes, true);
     status.primary_committed = static_cast<bool>(status);
     return status;
+}
+
+NativeSaveOpenResult CoOpSaveStore::open_native(SaveFileKind kind, const NativeSaveOpenRequest& request) {
+    std::unique_lock lock(impl_->mutex, std::try_to_lock);
+    if (!lock) return {fail(SaveStoreError::busy, ERROR_SHARING_VIOLATION), nullptr, ERROR_SHARING_VIOLATION, false};
+    return impl_->native_open(kind, request);
+}
+
+bool CoOpSaveStore::matches_binding(const SaveStoreConfig& config) const noexcept {
+    try {
+        std::wstring coop, protected_tree;
+        return valid_extension(config.extension) && normalize_directory(config.coop_directory, coop) &&
+            normalize_directory(config.protected_directory, protected_tree) &&
+            equal_windows(coop, impl_->coop.path) && equal_windows(protected_tree, impl_->protected_tree.path) &&
+            equal_windows(L"S0000." + config.extension, impl_->primary);
+    } catch (...) { return false; }
+}
+
+NativeSaveFileInfo CoOpSaveStore::query_native(SaveFileKind kind) {
+    std::unique_lock lock(impl_->mutex, std::try_to_lock);
+    if (!lock) return {fail(SaveStoreError::busy, ERROR_SHARING_VIOLATION)};
+    const auto opened = impl_->native_open(kind, {0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+    if (!opened) return {opened.status};
+    Handle file(opened.handle);
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(file.get(), &info)) return {fail(SaveStoreError::io_error, GetLastError())};
+    const auto time = [](const FILETIME& t) { return (std::uint64_t{t.dwHighDateTime} << 32) | t.dwLowDateTime; };
+    return {{}, info.dwFileAttributes, (std::uint64_t{info.nFileSizeHigh} << 32) | info.nFileSizeLow,
+            time(info.ftCreationTime), time(info.ftLastAccessTime), time(info.ftLastWriteTime)};
+}
+
+SaveStoreStatus CoOpSaveStore::remove_native(SaveFileKind kind) {
+    std::unique_lock lock(impl_->mutex, std::try_to_lock);
+    if (!lock) return fail(SaveStoreError::busy, ERROR_SHARING_VIOLATION);
+    if (kind != SaveFileKind::primary && kind != SaveFileKind::backup)
+        return fail(SaveStoreError::invalid_configuration, ERROR_INVALID_PARAMETER);
+    const auto& name = kind == SaveFileKind::primary ? impl_->primary : impl_->backup;
+    Handle file;
+    auto status = open_child(impl_->coop.leaf(), name, DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                             0, 1u, file);
+    if (!status) return status;
+    std::uint64_t size{};
+    status = inspect_file(file.get(), impl_->coop.path + L"\\" + name, false, size);
+    if (!status) {
+        if (!status.system_error) status.system_error = ERROR_ACCESS_DENIED;
+        return status;
+    }
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    if (!SetFileInformationByHandle(file.get(), FileDispositionInfo, &disposition, sizeof(disposition)))
+        return fail(SaveStoreError::io_error, GetLastError());
+    return {};
+}
+
+SaveStoreStatus CoOpSaveStore::copy_native(SaveFileKind source, SaveFileKind target, bool fail_if_exists) {
+    std::unique_lock lock(impl_->mutex, std::try_to_lock);
+    if (!lock) return fail(SaveStoreError::busy, ERROR_SHARING_VIOLATION);
+    if (source == target || (source != SaveFileKind::primary && source != SaveFileKind::backup) ||
+        (target != SaveFileKind::primary && target != SaveFileKind::backup))
+        return fail(SaveStoreError::invalid_configuration, ERROR_INVALID_PARAMETER);
+    const auto origin = impl_->native_open(source, {GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+    if (!origin) return origin.status;
+    Handle origin_pin(origin.handle);
+    const auto destination = impl_->native_open(target, {0, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL});
+    if (!destination) return destination.status;
+    Handle destination_pin(destination.handle);
+    if (fail_if_exists && !destination.created) return fail(SaveStoreError::backup_exists, ERROR_FILE_EXISTS);
+    const auto& origin_name = source == SaveFileKind::primary ? impl_->primary : impl_->backup;
+    const auto& target_name = target == SaveFileKind::primary ? impl_->primary : impl_->backup;
+    const auto origin_path = L"\\\\?\\" + impl_->coop.path + L"\\" + origin_name;
+    const auto target_path = L"\\\\?\\" + impl_->coop.path + L"\\" + target_name;
+    // The placeholder reserves a previously missing destination. Neither pinned
+    // leaf permits rename/deletion while CopyFileW opens the same file objects.
+    // FALSE is safe here even for fail-if-exists: prior existence was checked
+    // against the reserved handle under this profile's exclusive controller.
+    if (!CopyFileW(origin_path.c_str(), target_path.c_str(), FALSE)) {
+        const auto error = GetLastError();
+        auto failed = fail(SaveStoreError::io_error, error);
+        if (destination.created) {
+            BY_HANDLE_FILE_INFORMATION before{};
+            const bool identified = GetFileInformationByHandle(destination_pin.get(), &before) != FALSE;
+            destination_pin.reset();
+            Handle cleanup;
+            auto cleanup_status = open_child(impl_->coop.leaf(), target_name,
+                DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, 0, 1u, cleanup);
+            BY_HANDLE_FILE_INFORMATION after{};
+            if (!identified || !cleanup_status || !GetFileInformationByHandle(cleanup.get(), &after) ||
+                identity(before) != identity(after)) {
+                failed.cleanup_error = cleanup_status.system_error ? cleanup_status.system_error : ERROR_ACCESS_DENIED;
+            } else {
+                std::uint64_t size{};
+                cleanup_status = inspect_file(cleanup.get(), impl_->coop.path + L"\\" + target_name, false, size);
+                FILE_DISPOSITION_INFO remove{TRUE};
+                if (!cleanup_status) {
+                    failed.cleanup_error = cleanup_status.system_error ? cleanup_status.system_error : ERROR_ACCESS_DENIED;
+                } else if (!SetFileInformationByHandle(cleanup.get(), FileDispositionInfo, &remove, sizeof(remove))) {
+                    const auto cleanup_error = GetLastError();
+                    failed.cleanup_error = cleanup_error ? cleanup_error : ERROR_ACCESS_DENIED;
+                }
+            }
+        }
+        failed.destination_may_be_modified = !destination.created || failed.cleanup_error != 0;
+        return failed;
+    }
+    SaveStoreStatus result;
+    result.primary_committed = target == SaveFileKind::primary;
+    result.backup_committed = target == SaveFileKind::backup;
+    return result;
 }
 
 } // namespace skcoop::saves

@@ -78,11 +78,24 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/3",
           "label": "Saves do mod isolados e recuperáveis",
           "weight": 4,
-          "status": "in_progress",
+          "status": "verified",
           "min_players": 1,
           "min_machines": 1,
           "acceptance": "Criar, salvar, atualizar e remover o mod preserva os saves normais; restauração de backup foi comprovada.",
-          "evidence": null
+          "evidence": {
+            "commit": "db9c02420dae463515179f2818f2c5f0c01c8304",
+            "game_executable_sha256": "637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856",
+            "game_version": "Steam 1.06 / 1.6.0.0 / build 5794815",
+            "scenario": "Perfis novo e copiado em .co2; gravação no Ídolo; atualização do adaptador; recuperação e recarga pelo backup; retorno ao solo após retirar o iniciador. Instalação de teste independente e proteção externa dos originais.",
+            "tested_on": "2026-10-22",
+            "tested_by": "SanguineLoki700 (ações e confirmação no jogo); Codex (medições e testes de arquivos)",
+            "participants": {
+              "players": 1,
+              "machines": 1
+            },
+            "result": "passed",
+            "report": "docs/validation/native-save-isolation-2026-10-22.md"
+          }
         }
       ]
     },

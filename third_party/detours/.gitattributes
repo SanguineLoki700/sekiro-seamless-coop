@@ -1,0 +1,3 @@
+# Preserve the exact upstream Git blob bytes recorded in UPSTREAM.json.
+src/* -text
+LICENSE.md -text

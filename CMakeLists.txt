@@ -34,6 +34,30 @@ add_library(skcoop_save_policy STATIC src/saves/save_policy.cpp)
 target_include_directories(skcoop_save_policy PUBLIC include)
 target_link_libraries(skcoop_save_policy PUBLIC skcoop_windows_options)
 
+add_library(skcoop_save_native_policy STATIC src/saves/save_native_policy.cpp)
+target_include_directories(skcoop_save_native_policy PUBLIC include)
+target_link_libraries(skcoop_save_native_policy PUBLIC skcoop_save_policy)
+
+# Unmodified Microsoft Detours 4.0.1, pinned provenance/license alongside source.
+add_library(skcoop_detours STATIC
+  third_party/detours/src/detours.cpp third_party/detours/src/modules.cpp
+  third_party/detours/src/disasm.cpp third_party/detours/src/image.cpp
+  third_party/detours/src/creatwth.cpp third_party/detours/src/disolx86.cpp
+  third_party/detours/src/disolx64.cpp third_party/detours/src/disolia64.cpp
+  third_party/detours/src/disolarm.cpp third_party/detours/src/disolarm64.cpp)
+target_include_directories(skcoop_detours PUBLIC third_party/detours/src)
+set_property(TARGET skcoop_detours PROPERTY CXX_STANDARD 14)
+target_compile_definitions(skcoop_detours PRIVATE WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601)
+target_compile_options(skcoop_detours PRIVATE /W4 /Gy /Zl)
+
+add_library(skcoop_save_bootstrap SHARED
+  src/save_bootstrap/bootstrap_dll.cpp src/save_bootstrap/bootstrap.def)
+target_include_directories(skcoop_save_bootstrap PRIVATE include)
+target_link_libraries(skcoop_save_bootstrap PRIVATE skcoop_windows_options skcoop_detours)
+add_library(skcoop_bootstrap_host STATIC src/save_bootstrap/bootstrap_host.cpp)
+target_include_directories(skcoop_bootstrap_host PUBLIC include)
+target_link_libraries(skcoop_bootstrap_host PUBLIC skcoop_windows_options skcoop_detours bcrypt)
+
 add_library(skcoop_save_settings STATIC src/saves/save_settings.cpp)
 target_include_directories(skcoop_save_settings PUBLIC include)
 target_link_libraries(skcoop_save_settings PUBLIC skcoop_save_policy)
@@ -41,6 +65,11 @@ target_link_libraries(skcoop_save_settings PUBLIC skcoop_save_policy)
 add_library(skcoop_save_store STATIC src/saves/save_store.cpp)
 target_include_directories(skcoop_save_store PUBLIC include)
 target_link_libraries(skcoop_save_store PUBLIC skcoop_windows_options)
+
+add_library(skcoop_save_native_io STATIC src/saves/native_io_hooks.cpp)
+target_include_directories(skcoop_save_native_io PUBLIC include src/saves)
+target_link_libraries(skcoop_save_native_io PUBLIC skcoop_save_native_policy skcoop_save_store skcoop_detours shell32)
+target_link_libraries(skcoop_save_bootstrap PRIVATE skcoop_save_native_io)
 
 add_library(skcoop_save_bridge STATIC src/saves/save_bridge.cpp)
 target_include_directories(skcoop_save_bridge PUBLIC include)
@@ -69,6 +98,15 @@ add_executable(skcoop_probe src/probe/main.cpp)
 target_link_libraries(skcoop_probe PRIVATE skcoop_probe_policy psapi)
 
 if(BUILD_TESTING)
+  add_executable(skcoop_save_bootstrap_fixture tests/save_bootstrap_fixture.cpp)
+  target_include_directories(skcoop_save_bootstrap_fixture PRIVATE include)
+  target_link_libraries(skcoop_save_bootstrap_fixture PRIVATE skcoop_windows_options shell32)
+  add_executable(skcoop_save_bootstrap_tests tests/save_bootstrap_tests.cpp)
+  target_link_libraries(skcoop_save_bootstrap_tests PRIVATE skcoop_bootstrap_host)
+  add_dependencies(skcoop_save_bootstrap_tests skcoop_save_bootstrap skcoop_save_bootstrap_fixture)
+  add_test(NAME save_early_bootstrap_tests COMMAND skcoop_save_bootstrap_tests
+    "$<TARGET_FILE:skcoop_save_bootstrap_fixture>" "$<TARGET_FILE:skcoop_save_bootstrap>")
+  set_tests_properties(save_early_bootstrap_tests PROPERTIES TIMEOUT 80)
   add_executable(skcoop_windows_smoke tests/windows_smoke.cpp)
   target_link_libraries(skcoop_windows_smoke PRIVATE skcoop_launcher_support)
   add_dependencies(skcoop_windows_smoke skcoop_runtime skcoop_launcher)
@@ -85,6 +123,11 @@ if(BUILD_TESTING)
   target_link_libraries(skcoop_save_policy_tests PRIVATE skcoop_save_policy)
   add_test(NAME save_path_policy_tests COMMAND skcoop_save_policy_tests)
   set_tests_properties(save_path_policy_tests PROPERTIES TIMEOUT 15)
+
+  add_executable(skcoop_save_native_policy_tests tests/save_native_policy_tests.cpp)
+  target_link_libraries(skcoop_save_native_policy_tests PRIVATE skcoop_save_native_policy)
+  add_test(NAME save_native_path_policy_tests COMMAND skcoop_save_native_policy_tests)
+  set_tests_properties(save_native_path_policy_tests PROPERTIES TIMEOUT 15)
 
   add_executable(skcoop_save_settings_tests tests/save_settings_tests.cpp)
   target_link_libraries(skcoop_save_settings_tests PRIVATE skcoop_save_settings)
