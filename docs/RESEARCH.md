@@ -238,10 +238,75 @@ the read-path and stream-open dossiers report 35 and 7 unresolved calls.
 The Evidence and analysis snapshot were retained privately and the owned
 Ghidra session was closed.
 
-The next observation must identify actual save I/O and initialization timing
-before a hook can be enabled. Normal-game file tracing and controlled fixture
-tests are separate from a modified-game preservation test; neither awards
-functional points by itself.
+The next observation at that point required actual save I/O and initialization
+timing. The subsequent trace below supplies evidence for the former;
+initialization timing remains unresolved. Normal-game tracing and controlled
+fixtures remain separate from a modified-game preservation test.
+
+## Executed save I/O observation, 2026-10-21
+
+The original Steam game was observed for 55 seconds with REA 6.7.0 and
+Frida 17.23.2, after independent process-path, lifetime, disk-hash and mapped
+image-size checks. The executable SHA-256 remained
+`637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856`.
+The owner confirmed one rest at an Idol during the active observation window.
+That action does not identify an exact cause for every operation in the window.
+
+An earlier ETW attempt was rejected as incomplete because process filtering
+did not hold and events were lost; it supplies no save evidence. The replacement
+Frida route was first verified against an owned process using synthetic files.
+After repairing the missing official native Frida addon, fresh REA CLI and
+programmatic sessions worked. The existing MCP process still cached the failed
+import; a working CLI/provider session is not proof that this MCP connection
+had recovered.
+
+Temporary `Interceptor.attach` listeners observed KernelBase file APIs. They
+did not modify arguments/results, invoke game functions or inspect save-content
+buffers. Frida does install interception machinery in process memory; this was
+instrumented research, not a memory-write-free query or an installed mod.
+Only selected save basenames, operation metadata and main-image stack RVAs
+were retained. The host received `trace_ready` before requesting the owner's
+action.
+
+The retained trace contains **162 operations**, each with a main-image stack:
+60 `CreateFileW`, 60 `CloseHandle`, 24 `ReadFile`, six `WriteFile`, six
+`DeleteFileW` and six `CopyFileW`. All observed API returns succeeded; the
+read/write calls were synchronous. The observer ended at its duration limit
+with zero callback/path-read errors, no message truncation and its own listeners
+detached. Separate awaited REA cleanup reported no errors and released the
+session. The game process remained running.
+
+| Executed path | Evidence and scope |
+|---|---|
+| Read | Calls returning through `0x1cc822d` and `0x1cc830b` traversed the previously observed stream layer and read 64 and 768 bytes, respectively. These sizes do not establish the complete save format or mean that the entire save was read. |
+| Write | Calls returning through `0x1cc744e` reached `WriteFile` via `0x1a147b7` / `0x1aead84`. Six writes reported either 1,048,592 or 393,232 bytes, three of each. The associated opens used `GENERIC_WRITE`, no sharing and `OPEN_ALWAYS`. File offsets, seeks and truncation were not observed. |
+| Backup | In six ordered groups, deletion of `S0000.sl2.bak` returned through `0x1cc38a5`, followed by copying `S0000.sl2` to the backup through `0x1cc38e6`. Both calls succeeded in each group. This resolves the earlier overwrite-policy uncertainty for this scenario: an existing backup is deleted before the copy. It does not prove crash-safe replacement or all recovery paths. |
+
+Save Evidence:
+`ev_632fa98d5462672ebdaf8c7d43252fa4cda0c5e45e900365f4865e7f46cd9b0e`.
+Owned fixture Evidence for the same live-ready/cleanup path:
+`ev_25a886294ed0826432cf0f2fb4598a92e21dc7b58a5d527099f21d51a5c78a4d`.
+Raw artifacts and proprietary data remain private. Independent identity
+receipts supplement the REA observation, which does not itself attest the
+artifact hash in its Evidence subject.
+
+Coverage is partial: only handles opened after attachment were tracked;
+other API routes, pre-existing handles, offsets, asynchronous completions,
+startup and alternate failure/restore paths remain unverified. `MoveFileW`
+was unavailable at the selected module; no assumption of complete move/rename
+coverage is made. A preceding idle trace with zero events proves neither
+absence of save I/O nor isolation.
+
+The next native-adapter gate is to verify initialization before any save use
+and redirect existence/open/delete/copy/backup paths consistently while
+preserving native codec, offsets and I/O semantics. An individual `WriteFile`
+payload must not be treated as a complete save snapshot merely because our
+independent storage accepts opaque complete blobs. The captured write sizes
+alone do not prove an in-place update layout either.
+
+No `.co2` interception, original-save preservation with the mod, Steam Cloud
+behavior or gameplay criterion was verified. Functional progress stays **0%**.
+See the [validation record](validation/native-save-observation-2026-10-21.md).
 
 ## Primary references
 
