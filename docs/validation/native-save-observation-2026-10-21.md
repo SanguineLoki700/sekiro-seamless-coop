@@ -22,8 +22,12 @@ ao save, todas com pilha de chamadas dentro do executável selecionado:
 As chamadas observadas retornaram sucesso. Nas leituras, apareceram blocos
 de 64 e 768 bytes; nas gravações, três de 1.048.592 e três de 393.232 bytes.
 Essas medidas não descrevem o formato completo nem os offsets usados.
-Em seis grupos, o jogo excluiu o backup existente antes de copiar o primário
-para ele. Os grupos são operações observadas na janela, não seis descansos.
+Em seis grupos, a conclusão da gravação apareceu antes da conclusão da exclusão
+do backup e da cópia do primário para ele. A ordem registrada é de conclusão
+das chamadas; não há thread ou horário por evento para provar a ordem entre
+threads. Isso não comprova um backup da versão anterior à gravação nem captura
+todas as políticas de substituição. Os grupos são operações observadas na
+janela, não seis descansos.
 
 O observador terminou pelo limite de duração: zero erros de callback ou leitura
 de caminho, nenhuma mensagem truncada e remoção dos próprios listeners.
@@ -48,7 +52,8 @@ A identidade do processo, seu tempo de vida, caminho, tamanho da imagem e
 SHA-256 do executável foram conferidos separadamente. Os listeners temporários
 do Frida instrumentaram memória do processo, mas não alteraram argumentos ou
 retornos, chamaram funções do jogo por endereço ou leram buffers de conteúdo
-dos saves. Nenhum mod foi instalado. A gravação normal decorreu da sessão
+dos saves. Os nomes-base coletados não comprovam a pasta completa ou a conta
+do perfil de save. Nenhum mod foi instalado. A gravação normal decorreu da sessão
 controlada pelo responsável; não houve restauração automática do save.
 
 A tentativa ETW anterior falhou na restrição ao processo e perdeu eventos.

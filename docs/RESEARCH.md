@@ -265,8 +265,10 @@ did not modify arguments/results, invoke game functions or inspect save-content
 buffers. Frida does install interception machinery in process memory; this was
 instrumented research, not a memory-write-free query or an installed mod.
 Only selected save basenames, operation metadata and main-image stack RVAs
-were retained. The host received `trace_ready` before requesting the owner's
-action.
+were retained. Basenames do not attest the complete directory or account
+profile. Sequence numbers record `onLeave` completion order; the trace has no
+per-event thread ID or timestamp to establish cross-thread call ordering.
+The host received `trace_ready` before requesting the owner's action.
 
 The retained trace contains **162 operations**, each with a main-image stack:
 60 `CreateFileW`, 60 `CloseHandle`, 24 `ReadFile`, six `WriteFile`, six
@@ -280,7 +282,7 @@ session. The game process remained running.
 |---|---|
 | Read | Calls returning through `0x1cc822d` and `0x1cc830b` traversed the previously observed stream layer and read 64 and 768 bytes, respectively. These sizes do not establish the complete save format or mean that the entire save was read. |
 | Write | Calls returning through `0x1cc744e` reached `WriteFile` via `0x1a147b7` / `0x1aead84`. Six writes reported either 1,048,592 or 393,232 bytes, three of each. The associated opens used `GENERIC_WRITE`, no sharing and `OPEN_ALWAYS`. File offsets, seeks and truncation were not observed. |
-| Backup | In six ordered groups, deletion of `S0000.sl2.bak` returned through `0x1cc38a5`, followed by copying `S0000.sl2` to the backup through `0x1cc38e6`. Both calls succeeded in each group. This resolves the earlier overwrite-policy uncertainty for this scenario: an existing backup is deleted before the copy. It does not prove crash-safe replacement or all recovery paths. |
+| Backup | In six completion groups, successful deletion of `S0000.sl2.bak` returned through `0x1cc38a5`, followed by a successful copy of `S0000.sl2` to the backup through `0x1cc38e6`. Write completion preceded deletion/copy in each group. This observes deletion and copying on an executed backup path; it does not establish all overwrite policies, crash-safe replacement or preservation of the version preceding the write. The trace did not capture `CopyFileW`'s third argument. |
 
 Save Evidence:
 `ev_632fa98d5462672ebdaf8c7d43252fa4cda0c5e45e900365f4865e7f46cd9b0e`.
