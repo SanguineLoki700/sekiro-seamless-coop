@@ -310,6 +310,14 @@ No `.co2` interception, original-save preservation with the mod, Steam Cloud
 behavior or gameplay criterion was verified. Functional progress stays **0%**.
 See the [validation record](validation/native-save-observation-2026-10-21.md).
 
+## Native save integration — 2026-10-22
+
+The Windows adapter now returns real private file handles and redirects the observed metadata/open/delete/copy paths. An initial modified-game test failed with `FDP_System_Message(401171)`: scoped REA observation showed access-zero directory metadata opens refused with error 50. Supporting only these pinned directory metadata handles resolved the observed failure; data/write directory handles remain refused.
+
+The owner then confirmed loading a copied private profile, resting, reloading a recovered game-produced backup, creating a fresh profile and returning to the original game after removing the temporary launcher option. Whole-file checks confirmed changed cooperative data, matching cooperative backups and unchanged personal saves before the final unmodified-game load. These tests used an independent installation and external read-only/nonsharing handles on the original saves. The public diagnostic launcher remains disabled for gameplay.
+
+See [native I/O contracts](NATIVE_SAVE_IO.md) and the [acceptance record](validation/native-save-isolation-2026-10-22.md). That record accepts only the four-point save criterion; it does not establish multiplayer, Steam Cloud or an equivalent run without the external protection. Earlier observations above retain their historical scope.
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)
