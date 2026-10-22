@@ -53,7 +53,13 @@ struct InternalCopy {
 struct DirectoryPin {
     HANDLE handle{INVALID_HANDLE_VALUE};
     std::wstring path;
-    ~DirectoryPin() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    ~DirectoryPin() {
+        if (handle != INVALID_HANDLE_VALUE) {
+            const auto error = GetLastError();
+            CloseHandle(handle);
+            SetLastError(error);
+        }
+    }
 };
 struct State {
     NativeIoBinding binding;
@@ -188,6 +194,37 @@ bool query(State& state, std::wstring_view path, WIN32_FILE_ATTRIBUTE_DATA& resu
     return true;
 }
 
+HANDLE open_directory_metadata(State& state, std::size_t index, DWORD access, DWORD sharing,
+    LPSECURITY_ATTRIBUTES security, DWORD disposition, DWORD flags, HANDLE model) {
+    if (access != 0 || (sharing & ~(FILE_SHARE_READ | FILE_SHARE_WRITE)) || security || model ||
+        disposition != OPEN_EXISTING || flags != (FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS))
+        return denied(INVALID_HANDLE_VALUE, ERROR_NOT_SUPPORTED);
+    DirectoryPin opened;
+    opened.path = state.private_directories[index].path;
+    const auto expected = L"\\\\?\\" + opened.path;
+    opened.handle = real_CreateFileW(expected.c_str(), 0, sharing, nullptr, OPEN_EXISTING,
+        flags | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (opened.handle == INVALID_HANDLE_VALUE) return denied(INVALID_HANDLE_VALUE, GetLastError());
+    BY_HANDLE_FILE_INFORMATION actual{}, pinned{};
+    if (!GetFileInformationByHandle(opened.handle, &actual) ||
+        !GetFileInformationByHandle(state.private_directories[index].handle, &pinned))
+        return denied(INVALID_HANDLE_VALUE, GetLastError());
+    if (!(actual.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (actual.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        actual.dwVolumeSerialNumber != pinned.dwVolumeSerialNumber || actual.nFileIndexHigh != pinned.nFileIndexHigh ||
+        actual.nFileIndexLow != pinned.nFileIndexLow)
+        return denied(INVALID_HANDLE_VALUE, ERROR_ACCESS_DENIED);
+    std::wstring resolved(expected.size() + 1, L'\0');
+    const auto length = GetFinalPathNameByHandleW(opened.handle, resolved.data(), static_cast<DWORD>(resolved.size()),
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (!length || length >= resolved.size()) return denied(INVALID_HANDLE_VALUE, ERROR_ACCESS_DENIED);
+    resolved.resize(length);
+    if (!equal_windows(resolved, expected)) return denied(INVALID_HANDLE_VALUE, ERROR_ACCESS_DENIED);
+    ++counters.redirected; ++counters.directory_queries;
+    const auto handle = std::exchange(opened.handle, INVALID_HANDLE_VALUE);
+    SetLastError(ERROR_SUCCESS);
+    return handle;
+}
+
 template<class Function> HANDLE create_file(std::wstring_view path, DWORD access, DWORD sharing,
     LPSECURITY_ATTRIBUTES security, DWORD disposition, DWORD flags, HANDLE model,
     DWORD incoming_error, Function&& original) {
@@ -206,9 +243,7 @@ template<class Function> HANDLE create_file(std::wstring_view path, DWORD access
     const auto folder = directory(*state, path);
     if (folder.action == DirectoryAction::deny) return denied(INVALID_HANDLE_VALUE, ERROR_ACCESS_DENIED);
     if (folder.action == DirectoryAction::exact) {
-        // Directory handles are not exposed by this file adapter: relative NT
-        // opens through them would require an additional verified boundary.
-        return denied(INVALID_HANDLE_VALUE, ERROR_NOT_SUPPORTED);
+        return open_directory_metadata(*state, folder.index, access, sharing, security, disposition, flags, model);
     }
     ++counters.passthrough;
     SetLastError(incoming_error);

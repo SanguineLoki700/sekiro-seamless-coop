@@ -65,6 +65,7 @@ struct Tree {
     }
     ~Tree() {
         // Explicit files/directories only: no recursive delete of a computed path.
+        DeleteFileW((root / L"S0000.sl2").c_str());
         DeleteFileW((solo() / L"S0000.sl2").c_str());
         DeleteFileW((solo() / L"S0000.sl2.bak").c_str());
         DeleteFileW((coop() / L"S0000.co2").c_str());
@@ -154,8 +155,8 @@ int wmain(int argc, wchar_t** argv) {
                 result.status.profile_mode == SKCOOP_BOOTSTRAP_NATIVE_PROFILE, "Native-profile fixture did not complete");
             require(result.status.checkpoint_mask == 15 && result.status.installed_hooks == 1 &&
                 result.status.unexpected_results == 0 && result.status.native_redirected > 10 &&
-                // The sole expected selected failure is GetFileAttributes after deleting the primary.
-                result.status.native_denied == 1 && result.status.native_copy_failures == 0 &&
+                // One missing-primary query plus thirteen deliberate API/path refusals.
+                result.status.native_denied == 14 && result.status.native_copy_failures == 0 &&
                 result.status.native_destination_may_be_modified == 0, "Native hooks did not route the complete fixture");
             require(result.status.ready_sequence < result.status.tls_sequence &&
                 result.status.tls_sequence < result.status.global_sequence &&

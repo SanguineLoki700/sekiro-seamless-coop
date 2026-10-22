@@ -1,5 +1,8 @@
 #include "skcoop/save_bootstrap.h"
+#include <ShlObj.h>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 extern "C" __declspec(dllexport) const uint64_t skcoop_bootstrap_fixture_marker = SKCOOP_BOOTSTRAP_FIXTURE_MAGIC;
 
@@ -104,6 +107,123 @@ DWORD native_lifecycle(const WCHAR* primary) noexcept {
     if (!CloseHandle(restored)) ok = false;
     return ok ? ERROR_SUCCESS : ERROR_INVALID_DATA;
 }
+DWORD CALLBACK forbidden_progress(LARGE_INTEGER, LARGE_INTEGER, LARGE_INTEGER, LARGE_INTEGER,
+    DWORD, DWORD, HANDLE, HANDLE, LPVOID context) {
+    ++*static_cast<unsigned*>(context);
+    return PROGRESS_CONTINUE;
+}
+DWORD native_contracts(const WCHAR* primary) {
+    namespace fs = std::filesystem;
+    const fs::path source(primary), account = source.parent_path();
+    const auto expected_root = account.parent_path().parent_path().parent_path() / L"coop";
+    const auto unrelated = account / L"fixture-unrelated.tmp";
+    const auto outside = expected_root.parent_path() / L"S0000.sl2";
+    struct Cleanup {
+        const fs::path& unrelated;
+        ~Cleanup() { DeleteFileW(unrelated.c_str()); }
+    } cleanup{unrelated};
+    WCHAR roaming[MAX_PATH]{};
+    if (SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, roaming) != S_OK ||
+        CompareStringOrdinal(roaming, -1, expected_root.c_str(), -1, TRUE) != CSTR_EQUAL)
+        return ERROR_INVALID_DATA;
+    if (!(GetFileAttributesW(roaming) & FILE_ATTRIBUTE_DIRECTORY) ||
+        CreateDirectoryW(roaming, nullptr) || GetLastError() != ERROR_ALREADY_EXISTS)
+        return ERROR_INVALID_DATA;
+    // Startup probes the directory itself, including its trailing separator.
+    // The returned metadata handle must name the private directory, and cannot
+    // read file data. It is a real handle owned and closed by the caller.
+    const auto directory_path = account.wstring() + L"\\";
+    const auto directory_file = CreateFileW(directory_path.c_str(), 0, 0, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (directory_file == INVALID_HANDLE_VALUE) return failure_error();
+    WCHAR directory_actual[path_capacity + 16]{};
+    BY_HANDLE_FILE_INFORMATION directory_info{};
+    const auto directory_length = GetFinalPathNameByHandleW(directory_file, directory_actual,
+        static_cast<DWORD>(sizeof(directory_actual) / sizeof(directory_actual[0])), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    const auto directory_expected = L"\\\\?\\" + (expected_root / L"Sekiro" / account.filename()).wstring();
+    BYTE forbidden{}; DWORD directory_read{};
+    const bool directory_valid = directory_length && directory_length < sizeof(directory_actual) / sizeof(directory_actual[0]) &&
+        CompareStringOrdinal(directory_actual, -1, directory_expected.c_str(), -1, TRUE) == CSTR_EQUAL &&
+        GetFileInformationByHandle(directory_file, &directory_info) && (directory_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+        !ReadFile(directory_file, &forbidden, sizeof(forbidden), &directory_read, nullptr);
+    if (!CloseHandle(directory_file) || !directory_valid) return ERROR_INVALID_DATA;
+    const auto relocated = fs::path(roaming) / L"Sekiro" / account.filename() / L"S0000.sl2";
+    const auto relocated_file = CreateFileW(relocated.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (relocated_file == INVALID_HANDLE_VALUE) return failure_error();
+    if (!CloseHandle(relocated_file)) return failure_error();
+
+    char ansi[path_capacity * 4]{};
+    const UINT page = AreFileApisANSI() ? GetACP() : GetOEMCP();
+    BOOL substituted = FALSE;
+    if (!WideCharToMultiByte(page, 0, primary, -1, ansi, static_cast<int>(sizeof(ansi)), nullptr,
+            page == CP_UTF8 || page == CP_UTF7 ? nullptr : &substituted) || substituted)
+        return ERROR_NO_UNICODE_TRANSLATION;
+    const auto ansi_file = CreateFileA(ansi, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (ansi_file == INVALID_HANDLE_VALUE) return failure_error();
+    WCHAR actual_path[path_capacity + 16]{};
+    const auto length = GetFinalPathNameByHandleW(ansi_file, actual_path,
+        static_cast<DWORD>(sizeof(actual_path) / sizeof(actual_path[0])), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    const bool ansi_redirected = length && length < sizeof(actual_path) / sizeof(actual_path[0]) &&
+        cooperative_suffix(actual_path, length);
+    if (!CloseHandle(ansi_file) || !ansi_redirected) return ERROR_INVALID_DATA;
+
+    // Unsupported APIs must fail without invoking callbacks or touching files.
+    WIN32_FIND_DATAW found{};
+    const auto find = FindFirstFileW(primary, &found);
+    const auto find_error = GetLastError();
+    if (find != INVALID_HANDLE_VALUE) { FindClose(find); return ERROR_INVALID_DATA; }
+    if (find_error != ERROR_NOT_SUPPORTED || GetFileAttributesA(ansi) != INVALID_FILE_ATTRIBUTES ||
+        GetLastError() != ERROR_NOT_SUPPORTED || DeleteFileA(ansi) || GetLastError() != ERROR_NOT_SUPPORTED ||
+        CopyFileA(ansi, ansi, FALSE) || GetLastError() != ERROR_NOT_SUPPORTED)
+        return ERROR_INVALID_DATA;
+    const auto backup = source.wstring() + L".bak";
+    unsigned callback_calls{};
+    if (CopyFileExW(primary, backup.c_str(), forbidden_progress, &callback_calls, nullptr, 0) ||
+        GetLastError() != ERROR_NOT_SUPPORTED || callback_calls ||
+        MoveFileW(primary, backup.c_str()) || GetLastError() != ERROR_NOT_SUPPORTED ||
+        ReplaceFileW(primary, backup.c_str(), nullptr, 0, nullptr, nullptr) || GetLastError() != ERROR_NOT_SUPPORTED)
+        return ERROR_INVALID_DATA;
+    const auto refused_open = [](const fs::path& path, DWORD flags, LPSECURITY_ATTRIBUTES security, DWORD expected_error) {
+        const auto file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, security,
+            OPEN_ALWAYS, flags, nullptr);
+        const auto error = GetLastError();
+        if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); return false; }
+        return error == expected_error;
+    };
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, FALSE};
+    if (!refused_open(source, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr, ERROR_NOT_SUPPORTED) ||
+        !refused_open(source, FILE_ATTRIBUTE_NORMAL, &security, ERROR_NOT_SUPPORTED) ||
+        !refused_open(account, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr, ERROR_NOT_SUPPORTED) ||
+        !refused_open(outside, FILE_ATTRIBUTE_NORMAL, nullptr, ERROR_ACCESS_DENIED) ||
+        !refused_open(account.parent_path() / L"987654321" / L"S0000.sl2", FILE_ATTRIBUTE_NORMAL, nullptr, ERROR_ACCESS_DENIED))
+        return ERROR_INVALID_DATA;
+
+    // Unrelated files retain native creation/errors/data. A mixed save/non-save
+    // copy must not overwrite this sentinel even when fail_if_exists is false.
+    auto file = CreateFileW(unrelated.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return failure_error();
+    constexpr BYTE sentinel[]{0x19, 0x36, 0x72, 0xa4}; DWORD count{};
+    const bool written = WriteFile(file, sentinel, sizeof(sentinel), &count, nullptr) && count == sizeof(sentinel);
+    if (!CloseHandle(file) || !written) return ERROR_INVALID_DATA;
+    file = CreateFileW(unrelated.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const auto open_error = GetLastError();
+    if (file == INVALID_HANDLE_VALUE) return failure_error();
+    if (!CloseHandle(file) || open_error != ERROR_ALREADY_EXISTS) return ERROR_INVALID_DATA;
+    if (CopyFileW(primary, unrelated.c_str(), FALSE) || GetLastError() != ERROR_ACCESS_DENIED)
+        return ERROR_INVALID_DATA;
+    file = CreateFileW(unrelated.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return failure_error();
+    BYTE content[sizeof(sentinel)]{};
+    const bool preserved = ReadFile(file, content, sizeof(content), &count, nullptr) &&
+        count == sizeof(content) && std::memcmp(content, sentinel, sizeof(content)) == 0;
+    if (!CloseHandle(file) || !preserved) return ERROR_INVALID_DATA;
+    return ERROR_SUCCESS;
+}
 void NTAPI tls_callback(PVOID, DWORD reason, PVOID) {
     if (reason == DLL_PROCESS_ATTACH) checkpoint(SKCOOP_BOOTSTRAP_TLS);
 }
@@ -129,7 +249,14 @@ int wmain() {
             const auto record = resolve<skcoop_bootstrap_fixture_checkpoint_fn>(module, "skcoop_bootstrap_fixture_checkpoint");
             WCHAR path[path_capacity]{};
             if (!get_path || !record || !get_path(path, path_capacity)) InterlockedExchange(&failed, 1);
-            else if (!record(SKCOOP_BOOTSTRAP_IO_COMPLETE, native_lifecycle(path))) InterlockedExchange(&failed, 1);
+            else {
+                auto result = native_lifecycle(path);
+                if (result == ERROR_SUCCESS) {
+                    try { result = native_contracts(path); }
+                    catch (...) { result = ERROR_GEN_FAILURE; }
+                }
+                if (!record(SKCOOP_BOOTSTRAP_IO_COMPLETE, result)) InterlockedExchange(&failed, 1);
+            }
         }
     }
     return failed == 0 ? 0 : 40;
