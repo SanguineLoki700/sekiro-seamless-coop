@@ -313,6 +313,161 @@ void junction_root_is_rejected_or_explicitly_skipped() {
     require(!fs::exists(fs::path(config.protected_directory) / L".skcoop-store.lock"), "junction wrote into protected directory");
 }
 
+void native_handles_preserve_partial_writes_and_position() {
+    Fixture fixture;
+    seed(fixture.primary(), v2);
+    auto store = CoOpSaveStore::open(fixture.config());
+    require(static_cast<bool>(store), "native store open failed");
+    {
+        const auto result = store.store->open_native(SaveFileKind::primary,
+            {GENERIC_READ | GENERIC_WRITE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL});
+        require(result && !result.created && result.last_error == ERROR_ALREADY_EXISTS, "OPEN_ALWAYS existing semantics lost");
+        NativeHandle file{result.handle};
+        LARGE_INTEGER position{}; position.QuadPart = 2;
+        require(SetFilePointerEx(file.value, position, nullptr, FILE_BEGIN) != FALSE, "native seek failed");
+        const std::array<std::uint8_t, 2> patch{0xee, 0xdd};
+        DWORD transferred{};
+        require(WriteFile(file.value, patch.data(), 2, &transferred, nullptr) && transferred == 2, "native partial write failed");
+        position.QuadPart = 6;
+        require(SetFilePointerEx(file.value, position, nullptr, FILE_BEGIN) != FALSE, "second seek failed");
+        const std::uint8_t tail = 77;
+        require(WriteFile(file.value, &tail, 1, &transferred, nullptr) && transferred == 1, "second partial write failed");
+        require(FlushFileBuffers(file.value) != FALSE, "native flush failed");
+        LARGE_INTEGER size{};
+        require(GetFileSizeEx(file.value, &size) && size.QuadPart == static_cast<LONGLONG>(v2.size()), "partial write truncated untouched bytes");
+        position.QuadPart = 0;
+        require(SetFilePointerEx(file.value, position, nullptr, FILE_BEGIN) != FALSE, "read seek failed");
+        std::array<std::uint8_t, 7> bytes{};
+        require(ReadFile(file.value, bytes.data(), static_cast<DWORD>(bytes.size()), &transferred, nullptr) && transferred == bytes.size(), "native read failed");
+        auto expected = v2; expected[2] = 0xee; expected[3] = 0xdd; expected[6] = 77;
+        require(std::vector<std::uint8_t>(bytes.begin(), bytes.end()) == expected, "unwritten bytes or offsets changed");
+    }
+    const auto info = store.store->query_native(SaveFileKind::primary);
+    require(info && info.size == v2.size() && !(info.attributes & FILE_ATTRIBUTE_DIRECTORY), "native metadata query mismatch");
+}
+
+void native_creation_dispositions_are_explicit() {
+    Fixture fixture;
+    auto store = CoOpSaveStore::open(fixture.config());
+    require(static_cast<bool>(store), "store open failed");
+    auto opened = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL});
+    require(opened && opened.created && opened.last_error == ERROR_SUCCESS, "missing OPEN_ALWAYS did not create");
+    require(CloseHandle(opened.handle) != FALSE, "native close failed");
+    seed(fixture.primary(), v1);
+    auto collision = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, CREATE_NEW, FILE_ATTRIBUTE_NORMAL});
+    require(!collision && collision.last_error == ERROR_FILE_EXISTS && raw_read(fixture.primary()) == v1, "CREATE_NEW overwrote existing file");
+    auto missing = store.store->open_native(SaveFileKind::backup, {GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+    require(!missing && missing.last_error == ERROR_FILE_NOT_FOUND && !fs::exists(fixture.backup()), "missing OPEN_EXISTING created or fell back");
+    auto truncate = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL});
+    require(truncate && !truncate.created, "valid truncate failed");
+    require(CloseHandle(truncate.handle) != FALSE && fs::file_size(fixture.primary()) == 0, "truncate did not set length0");
+    seed(fixture.primary(), v2);
+    auto recreate = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL});
+    require(recreate && !recreate.created && recreate.last_error == ERROR_ALREADY_EXISTS, "CREATE_ALWAYS existing status wrong");
+    require(CloseHandle(recreate.handle) != FALSE && fs::file_size(fixture.primary()) == 0, "CREATE_ALWAYS did not truncate validated file");
+}
+
+void native_hardlinks_are_rejected_before_destructive_access() {
+    Fixture fixture;
+    const auto solo = fs::path(fixture.config().protected_directory) / L"S0000.sl2";
+    seed(solo, v1);
+    auto store = CoOpSaveStore::open(fixture.config());
+    require(static_cast<bool>(store), "store open failed");
+    require(CreateHardLinkW(fixture.primary().c_str(), solo.c_str(), nullptr) != FALSE, "hardlink fixture unavailable");
+    for (const DWORD disposition : {CREATE_ALWAYS, TRUNCATE_EXISTING, OPEN_ALWAYS}) {
+        auto opened = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, disposition, FILE_ATTRIBUTE_NORMAL});
+        require(!opened && opened.status.error == SaveStoreError::hard_link && opened.status.system_error != 0 && !opened.handle, "native open followed a hardlink or lost Win32 failure");
+        require(raw_read(solo) == v1, "hardlink seed was truncated before validation");
+    }
+    const auto query = store.store->query_native(SaveFileKind::primary);
+    require(!query && query.status.system_error != 0, "native query lost physical rejection error");
+    const auto removed = store.store->remove_native(SaveFileKind::primary);
+    require(!removed && removed.system_error != 0, "native delete removed linked seed name or lost error");
+    require(fs::exists(fixture.primary()) && raw_read(solo) == v1, "hardlink denial changed files");
+    require(DeleteFileW(fixture.primary().c_str()) != FALSE, "fixture hardlink cleanup failed");
+    seed(fixture.primary(), v2);
+    require(CreateHardLinkW(fixture.backup().c_str(), solo.c_str(), nullptr) != FALSE, "backup link fixture failed");
+    const auto copied = store.store->copy_native(SaveFileKind::primary, SaveFileKind::backup, false);
+    require(!copied && copied.error == SaveStoreError::hard_link && copied.system_error != 0 && raw_read(solo) == v1, "native copy overwrote linked backup or lost error");
+}
+
+void native_copy_delete_and_explicit_recovery() {
+    Fixture fixture;
+    const auto solo = fs::path(fixture.config().protected_directory) / L"S0000.sl2";
+    seed(solo, v1); seed(fixture.primary(), v1);
+    auto store = CoOpSaveStore::open(fixture.config());
+    require(static_cast<bool>(store), "store open failed");
+    const auto missing = store.store->query_native(SaveFileKind::backup);
+    require(!missing && missing.status.error == SaveStoreError::missing_file, "missing backup query did not stay missing");
+    auto copy = store.store->copy_native(SaveFileKind::primary, SaveFileKind::backup, true);
+    if (!copy) std::cerr << "Native copy error=" << static_cast<int>(copy.error) << " system=" << copy.system_error << '\n';
+    require(copy && copy.backup_committed && raw_read(fixture.backup()) == v1, "native copy to new backup failed");
+    auto refused = store.store->copy_native(SaveFileKind::primary, SaveFileKind::backup, true);
+    require(!refused && refused.system_error == ERROR_FILE_EXISTS && raw_read(fixture.backup()) == v1, "copy fail-if-exists ignored");
+    {
+        auto opened = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+        require(static_cast<bool>(opened), "native write reopen failed"); NativeHandle handle{opened.handle}; DWORD count{};
+        require(WriteFile(handle.value, v2.data(), static_cast<DWORD>(v2.size()), &count, nullptr) && count == v2.size(), "native update failed");
+    }
+    require(raw_read(fixture.backup()) == v1, "native primary update silently replaced backup");
+    copy = store.store->copy_native(SaveFileKind::primary, SaveFileKind::backup, false);
+    require(copy && raw_read(fixture.backup()) == v2, "native copy replace failed");
+    require(static_cast<bool>(store.store->remove_native(SaveFileKind::primary)), "native primary deletion failed");
+    require(!fs::exists(fixture.primary()), "deleted primary still exists");
+    copy = store.store->copy_native(SaveFileKind::backup, SaveFileKind::primary, true);
+    require(copy && copy.primary_committed && raw_read(fixture.primary()) == v2, "explicit native recovery failed");
+    require(static_cast<bool>(store.store->remove_native(SaveFileKind::backup)), "native backup deletion failed");
+    require(!store.store->query_native(SaveFileKind::backup) && raw_read(solo) == v1, "native cycle modified solo seed or fell back");
+}
+
+void native_sharing_and_leaf_pins_are_retained() {
+    Fixture fixture; seed(fixture.primary(), v1); seed(fixture.backup(), v2);
+    auto store = CoOpSaveStore::open(fixture.config()); require(static_cast<bool>(store), "store open failed");
+    {
+        const auto opened = store.store->open_native(SaveFileKind::primary, {GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+        require(static_cast<bool>(opened), "native reader failed"); NativeHandle file{opened.handle};
+        auto writer = store.store->open_native(SaveFileKind::primary, {GENERIC_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+        require(!writer && writer.last_error == ERROR_SHARING_VIOLATION, "native sharing was silently weakened");
+        require(!DeleteFileW(fixture.primary().c_str()) && !MoveFileExW(fixture.primary().c_str(), (fixture.root / L"moved").c_str(), 0), "returned handle allowed replacement of its leaf");
+    }
+    {
+        const auto opened = store.store->open_native(SaveFileKind::backup, {GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL});
+        require(static_cast<bool>(opened), "backup reader failed"); NativeHandle file{opened.handle};
+        const auto copy = store.store->copy_native(SaveFileKind::primary, SaveFileKind::backup, false);
+        require(!copy && copy.system_error == ERROR_SHARING_VIOLATION && copy.cleanup_error == 0 && copy.destination_may_be_modified, "copy ignored sharing or claimed failed copy guarantees preservation");
+        require(raw_read(fixture.backup()) == v2, "failed copy changed existing backup");
+    }
+}
+
+void native_unsupported_arguments_do_not_touch_files() {
+    Fixture fixture; seed(fixture.primary(), v1);
+    auto store = CoOpSaveStore::open(fixture.config()); require(static_cast<bool>(store), "store open failed");
+    require(store.store->matches_binding(fixture.config()), "store failed to match its pinned roots");
+    auto other_binding = fixture.config(); other_binding.protected_directory = fixture.config().coop_directory;
+    require(!store.store->matches_binding(other_binding), "wrong protected root accepted as native binding");
+    other_binding = fixture.config(); other_binding.extension = L"different";
+    require(!store.store->matches_binding(other_binding), "wrong native namespace binding accepted");
+    const NativeSaveOpenRequest base{GENERIC_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL};
+    std::vector<NativeSaveOpenRequest> bad;
+    auto value = base; value.desired_access = DELETE; bad.push_back(value);
+    value = base; value.share_mode = FILE_SHARE_DELETE; bad.push_back(value);
+    value = base; value.flags_and_attributes |= FILE_FLAG_OVERLAPPED; bad.push_back(value);
+    value = base; value.flags_and_attributes |= FILE_FLAG_DELETE_ON_CLOSE; bad.push_back(value);
+    value = base; value.security_attributes_present = true; bad.push_back(value);
+    value = base; value.template_file_present = true; bad.push_back(value);
+    value = base; value.creation_disposition = 42; bad.push_back(value);
+    for (const auto& request : bad) {
+        require(!store.store->open_native(SaveFileKind::primary, request), "unsupported native request accepted");
+        require(raw_read(fixture.primary()) == v1, "invalid request truncated file");
+    }
+    const auto query = store.store->open_native(SaveFileKind::primary,
+        {0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS});
+    require(static_cast<bool>(query), "observed metadata-only open flags refused");
+    require(CloseHandle(query.handle) != FALSE, "metadata handle close failed");
+    require(!store.store->open_native(static_cast<SaveFileKind>(9), base), "invalid file kind accepted");
+    require(!store.store->copy_native(SaveFileKind::primary, SaveFileKind::primary, false), "copy to same physical file accepted");
+}
+
 void short_path_alias_is_rejected_or_explicitly_skipped() {
     Fixture fixture;
     auto config = fixture.config();
@@ -334,7 +489,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto result = CoOpSaveStore::open({argv[2], argv[3], L"co2"});
         return !result && result.status.error == SaveStoreError::busy ? 0 : 4;
     }
-    const std::array<std::pair<std::string_view, std::function<void()>>, 13> cases{{
+    const std::array<std::pair<std::string_view, std::function<void()>>, 19> cases{{
         {"write_backup_restore_exact_bytes", write_backup_restore_exact_bytes},
         {"explicit_backup_replacement", explicit_backup_replacement},
         {"invalid_names_and_roots_fail_without_discovery", invalid_names_and_roots_fail_without_discovery},
@@ -348,6 +503,12 @@ int wmain(int argc, wchar_t** argv) {
         {"partial_pair_commit_is_reported_without_claiming_transaction", partial_pair_commit_is_reported_without_claiming_transaction},
         {"junction_root_is_rejected_or_explicitly_skipped", junction_root_is_rejected_or_explicitly_skipped},
         {"short_path_alias_is_rejected_or_explicitly_skipped", short_path_alias_is_rejected_or_explicitly_skipped},
+        {"native_handles_preserve_partial_writes_and_position", native_handles_preserve_partial_writes_and_position},
+        {"native_creation_dispositions_are_explicit", native_creation_dispositions_are_explicit},
+        {"native_hardlinks_are_rejected_before_destructive_access", native_hardlinks_are_rejected_before_destructive_access},
+        {"native_copy_delete_and_explicit_recovery", native_copy_delete_and_explicit_recovery},
+        {"native_sharing_and_leaf_pins_are_retained", native_sharing_and_leaf_pins_are_retained},
+        {"native_unsupported_arguments_do_not_touch_files", native_unsupported_arguments_do_not_touch_files},
     }};
     std::size_t failed{}, skipped{}, passed{};
     for (const auto& [name, test] : cases) {
