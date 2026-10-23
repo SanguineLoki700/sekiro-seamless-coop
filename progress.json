@@ -56,11 +56,24 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/1",
           "label": "Lançador dedicado inicia o mod",
           "weight": 3,
-          "status": "in_progress",
+          "status": "verified",
           "min_players": 1,
           "min_machines": 1,
           "acceptance": "O lançador detecta a instalação Steam suportada, valida os arquivos e inicia a DLL; abrir o jogo normalmente continua disponível.",
-          "evidence": null
+          "evidence": {
+            "commit": "d48d46911f78c497a7bb4b050bdabed626a892f9",
+            "game_executable_sha256": "637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856",
+            "game_version": "Steam 1.06 / 1.6.0.0 / build 5794815",
+            "scenario": "Descoberta Steam e validação de arquivos; entrada pela Steam no lançador público, DLL com READY antes de TLS, perfil .co2 carregado e encerramento normal; originais preservados; retirada da opção e recarga do jogo normal sem DLL.",
+            "tested_on": "2026-10-23",
+            "tested_by": "SanguineLoki700 (ações e confirmação no jogo); Codex (medições, DLL/processos e arquivos)",
+            "participants": {
+              "players": 1,
+              "machines": 1
+            },
+            "result": "passed",
+            "report": "docs/validation/core-launcher-2026-10-23.md"
+          }
         },
         {
           "id": "core-native-runtime",
