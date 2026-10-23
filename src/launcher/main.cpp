@@ -1,6 +1,8 @@
 #include "preflight.h"
 #include "process.h"
 #include "runtime_loader.h"
+#include "steam_install.h"
+#include "protected_launch.h"
 #include "skcoop/save_settings.hpp"
 #include <iostream>
 #include <stdexcept>
@@ -12,6 +14,9 @@ void usage() {
         L"  --diagnose [--runtime <dll>]       Load the selected diagnostic DLL locally\n"
         L"  --inspect-save-profile [ini]      Validate settings; no save/game access\n"
         L"  --self-test                       Run only our controlled smoke-test child\n"
+        L"  --find-game                       Detect official Steam installation; no launch\n"
+        L"  --check-launch <ini>              Check protected integration configuration\n"
+        L"  --steam-start [ini] <Steam exe>   Explicit protected test, via Steam only\n"
         L"  --launch <exe> [--profiles <ini>]  Preflight, then refuse (not implemented)\n";
 }
 }
@@ -21,6 +26,24 @@ int wmain(int argc, wchar_t** argv) {
         if (argc == 1 || (argc == 2 && std::wstring_view(argv[1]) == L"--help")) { usage(); return 0; }
         const std::wstring command = argv[1];
         const auto folder = executable_directory();
+        if (command == L"--find-game" && argc == 2) {
+            const auto install = inspect_steam_install();
+            const auto identity = inspect_executable(install.executable);
+            std::wcout << L"Steam AppID: 814380\nExecutable: " << install.executable.wstring()
+                << L"\nBuild: " << std::wstring(install.build_id.begin(),install.build_id.end())
+                << L"\nSHA-256: " << std::wstring(identity.sha256.begin(),identity.sha256.end())
+                << L"\nInspection only. No process created.\n";
+            return 0;
+        }
+        if (command == L"--check-launch") {
+            if (argc != 3) throw std::runtime_error("Use --check-launch <protected launch ini>.");
+            return check_protected_launch(argv[2]);
+        }
+        if (command == L"--steam-start") {
+            if (argc == 3) return steam_protected_launch(folder / L"config" / L"launch.ini",argv[2]);
+            if (argc == 4) return steam_protected_launch(argv[2],argv[3]);
+            throw std::runtime_error("Steam must supply exactly one original Sekiro executable after the optional launch configuration.");
+        }
         if (command == L"--inspect-save-profile") {
             if (argc != 2 && argc != 3) throw std::runtime_error("Invalid save profile arguments.");
             const auto path = argc == 3 ? std::filesystem::path(argv[2]) : folder / L"config" / L"save_profile.ini";
@@ -29,7 +52,7 @@ int wmain(int argc, wchar_t** argv) {
                 << L"\nDestination mode: "
                 << (settings.mode == skcoop::saves::DestinationMode::separate_profile ? L"separate_profile" : L"same_account_directory")
                 << L"\nProfile root: " << (settings.coop_profile_root.empty() ? L"not configured" : L"configured")
-                << L"\nNative save interception: not implemented\nNo save or game process was opened.\n";
+                << L"\nNative save interception: available only in the explicit protected integration launch\nNo save or game process was opened.\n";
             return 0;
         }
         if (command == L"--self-test" && argc == 2) {
@@ -49,7 +72,7 @@ int wmain(int argc, wchar_t** argv) {
             if (runtime.initialize(&options) != SKCOOP_OK) throw std::runtime_error("Diagnostic initialization failed.");
             std::wcout << L"Runtime ABI: " << runtime.abi_version() << L"\nDiagnostic initialization: ready\n"
                 << L"Native hooks: " << caps.native_hooks << L"\nSave isolation: " << caps.save_isolation
-                << L"\nMultiplayer: " << caps.multiplayer << L"\n(0 = unimplemented). No game was started.\n";
+                << L"\nMultiplayer: " << caps.multiplayer << L"\n(0 = inactive in this diagnostic process). No game was started.\n";
             return 0;
         }
         if (command == L"--inspect" || command == L"--launch") {
@@ -73,7 +96,7 @@ int wmain(int argc, wchar_t** argv) {
                 std::wcerr << L"Launch refused: exact hash plus verified native hooks and saves are required. No process was created.\n";
                 return 20;
             }
-            std::wcerr << L"Launch refused: this build has no gameplay bootstrap, native hooks, save isolation, or multiplayer. No process was created.\n";
+            std::wcerr << L"Launch refused: gameplay and multiplayer are unavailable. Protected integration tests use the separate Steam entry. No process was created.\n";
             return 21;
         }
         usage();

@@ -1,4 +1,5 @@
 #include "skcoop/runtime_api.h"
+#include "launch_bootstrap.h"
 #include <Windows.h>
 #include <atomic>
 
@@ -7,10 +8,13 @@ HMODULE module_handle = nullptr;
 std::atomic<uint32_t> runtime_state{SKCOOP_STATE_LOADED};
 }
 
-BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
+BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {
         module_handle = module;
+        return skcoop::runtime::launch_bootstrap_attach() ? TRUE : FALSE;
     }
+    if (reason == DLL_PROCESS_DETACH && reserved != nullptr)
+        skcoop::runtime::launch_bootstrap_detach();
     return TRUE;
 }
 
@@ -42,6 +46,7 @@ extern "C" SKCOOP_API uint32_t skcoop_runtime_initialize(const skcoop_init_optio
 }
 
 extern "C" SKCOOP_API uint32_t skcoop_runtime_shutdown(void) {
+    if (skcoop::runtime::launch_bootstrap_active()) return SKCOOP_UNIMPLEMENTED;
     runtime_state.store(SKCOOP_STATE_LOADED);
     return SKCOOP_OK;
 }

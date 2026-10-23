@@ -1,0 +1,3 @@
+LIBRARY skcoop_runtime
+EXPORTS
+    skcoop_runtime_launch_marker @1

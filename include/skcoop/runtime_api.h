@@ -58,7 +58,9 @@ typedef struct skcoop_capabilities {
 /* Call initialize explicitly after LoadLibrary returns, outside the loader lock.
  * ABI v1 requires exact struct_size; all reserved fields must be zero.
  * Health/capability output objects must have struct_size set by the caller.
- * Only diagnostic initialization is implemented. No game memory is touched. */
+ * This ABI initializes diagnostics only. The separate protected-launch payload
+ * installs native save I/O hooks during initial process loading, before TLS.
+ * That launch path does not implement multiplayer/gameplay initialization. */
 SKCOOP_API uint32_t skcoop_runtime_abi_version(void);
 SKCOOP_API uint32_t skcoop_runtime_health(skcoop_health* output);
 SKCOOP_API uint32_t skcoop_runtime_capabilities(skcoop_capabilities* output);

@@ -2,7 +2,7 @@
 
 O adaptador Windows conecta a política de caminhos ao `CoOpSaveStore` e devolve handles reais do sistema ao jogo. Na build Steam identificada, os testes locais confirmaram criação, carregamento, gravação e recuperação de saves `.co2` em uma instalação independente. O [relatório de aceitação](validation/native-save-isolation-2026-10-22.md) registra os cenários e seus limites.
 
-O lançador público permanece diagnóstico. O bootstrap público de testes aceita somente seu executável-fixture e sua marca exportada; o teste de Sekiro usou um iniciador privado, com identidade exata, perfil preparado e proteção adicional dos arquivos solo. Ainda falta integrar esse fluxo ao pacote público. O runtime diagnóstico e `game_profiles.ini` mantêm suas capacidades de gameplay desativadas.
+O [lançador público](LAUNCHER.md) incorpora agora esse fluxo em uma entrada explícita de integração pela Steam, com identidade exata, perfil preparado e proteção adicional dos arquivos solo. O [teste de abertura e retorno ao solo](validation/core-launcher-2026-10-23.md) passou na mesma build. O bootstrap-fixture continua separado e aceita somente executáveis próprios. O diagnóstico da DLL e `game_profiles.ini` mantêm gameplay desativado; a inicialização protegida não implementa multiplayer.
 
 ## Vinculação e caminhos
 

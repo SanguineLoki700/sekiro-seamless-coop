@@ -2,7 +2,7 @@
 
 > Gerado de `progress.json` por `python tools/progress.py`. Não editar este arquivo à mão.
 
-Baseline: **v1-campanha-4-jogadores**. **4% verificado / 96% restante.**
+Baseline: **v1-campanha-4-jogadores**. **7% verificado / 93% restante.**
 
 Somente critérios `verified` somam seus pontos. Trabalho em andamento e configuração de ferramentas não concedem pontos parciais. O percentual não estima prazo ou esforço.
 
@@ -10,14 +10,14 @@ A label GitHub `status:validation` significa que o trabalho aguarda validação;
 
 | Funcionalidade | Verificado | Falta |
 |---|---:|---:|
-| Núcleo, compatibilidade e saves isolados | 4/10 pontos | 6 pontos |
+| Núcleo, compatibilidade e saves isolados | 7/10 pontos | 3 pontos |
 | Personagens remotos e movimentação | 0/20 pontos | 20 pontos |
 | Combate, IA, postura e chefes | 0/25 pontos | 25 pontos |
 | Sessão Steam, convites e reconexão | 0/10 pontos | 10 pontos |
 | Continuidade, viagens e persistência | 0/15 pontos | 15 pontos |
 | Campanha, ramificações e encontros especiais | 0/15 pontos | 15 pontos |
 | Estabilidade, pacote e entrega pública | 0/5 pontos | 5 pontos |
-| **Total da v1** | **4%** | **96%** |
+| **Total da v1** | **7%** | **93%** |
 
 ## Preparação (fora dos 100 pontos)
 
@@ -33,11 +33,12 @@ A label GitHub `status:validation` significa que o trabalho aguarda validação;
 
 ## Critérios e trabalho restante
 
-### Núcleo, compatibilidade e saves isolados — 4/10 pontos
+### Núcleo, compatibilidade e saves isolados — 7/10 pontos
 
-- [ ] **core-launcher** — Lançador dedicado inicia o mod (3 pontos; Em andamento)
+- [x] **core-launcher** — Lançador dedicado inicia o mod (3 pontos; Verificado)
   - Aceitação: O lançador detecta a instalação Steam suportada, valida os arquivos e inicia a DLL; abrir o jogo normalmente continua disponível.
   - Validação mínima: 1 jogador(es), 1 máquina(s).
+  - Evidência: [relatório](docs/validation/core-launcher-2026-10-23.md); commit `d48d46911f78c497a7bb4b050bdabed626a892f9`; jogo Steam 1.06 / 1.6.0.0 / build 5794815; 2026-10-23; resultado `passed`.
 - [ ] **core-native-runtime** — DLL e compatibilidade verificadas no jogo (3 pontos; Em andamento)
   - Aceitação: A DLL carrega no executável identificado e recusa versões sem suporte antes de aplicar hooks.
   - Validação mínima: 1 jogador(es), 1 máquina(s).

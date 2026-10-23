@@ -2,11 +2,11 @@
 
 Projeto comunitário para criar coop contínua de até **quatro jogadores** em **Sekiro: Shadows Die Twice — GOTY Edition**, no Windows com Steam.
 
-**Estado atual: saves nativos validados localmente; multiplayer em desenvolvimento.** Criação, carregamento, gravação e recuperação de `.co2` foram testados em Sekiro com um iniciador privado de integração. Personagens remotos, transporte Steam e combate sincronizado continuam pendentes. Ainda não há release jogável de coop.
+**Estado atual: lançador e saves separados validados localmente; multiplayer em desenvolvimento.** O lançador público já abre a cópia de teste pela Steam com a DLL e o perfil `.co2`. Criação, gravação e recuperação dos saves também passaram nos cenários locais. Personagens remotos, transporte Steam e combate sincronizado continuam pendentes. Ainda não há release jogável de coop.
 
 Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com/SanguineLoki700/sekiro-seamless-coop).
 
-**Trabalho atual: integração segura e pesquisa dos personagens.** A DLL de teste já carregou na build identificada com saves separados. Falta incorporar esse fluxo ao pacote público e validar as funções e os dados necessários para controlar personagens. Depois vêm a prova entre duas máquinas e a ampliação para quatro jogadores. Veja as [etapas e quando o jogo precisa estar aberto](docs/ROADMAP.md#etapas-de-execução).
+**Trabalho atual: compatibilidade do runtime e pesquisa dos personagens.** O [lançador protegido](docs/LAUNCHER.md) incorpora o fluxo de saves testado. Faltam validar os dados e as funções para controlar personagens, conectar duas máquinas e ampliar para quatro jogadores. Veja as [etapas e quando o jogo precisa estar aberto](docs/ROADMAP.md#etapas-de-execução).
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
@@ -15,18 +15,18 @@ O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente
 <!-- progress:start -->
 ![Progresso funcional verificado da v1](docs/progress.svg)
 
-**4% verificado; 96% ainda não verificado.** Este número mede critérios aceitos da v1, não tempo ou esforço restante.
+**7% verificado; 93% ainda não verificado.** Este número mede critérios aceitos da v1, não tempo ou esforço restante.
 
 | Funcionalidade | Verificado | Falta |
 |---|---:|---:|
-| Núcleo, compatibilidade e saves isolados | 4/10 pontos | 6 pontos |
+| Núcleo, compatibilidade e saves isolados | 7/10 pontos | 3 pontos |
 | Personagens remotos e movimentação | 0/20 pontos | 20 pontos |
 | Combate, IA, postura e chefes | 0/25 pontos | 25 pontos |
 | Sessão Steam, convites e reconexão | 0/10 pontos | 10 pontos |
 | Continuidade, viagens e persistência | 0/15 pontos | 15 pontos |
 | Campanha, ramificações e encontros especiais | 0/15 pontos | 15 pontos |
 | Estabilidade, pacote e entrega pública | 0/5 pontos | 5 pontos |
-| **Total da v1** | **4%** | **96%** |
+| **Total da v1** | **7%** | **93%** |
 
 [Critérios, preparação e evidências](PROGRESS.md) · [Marcos e regras](docs/ROADMAP.md)
 <!-- progress:end -->
@@ -37,14 +37,14 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 
 ## O que existe hoje
 
-- Lançador próprio com identificação PE/SHA-256 e diagnóstico da DLL.
-- Runtime diagnóstico com ABI explícita e capacidades declaradas; bootstrap separado para os testes de inicialização precoce.
+- Lançador próprio com descoberta Steam, identificação PE/SHA-256 e [inicialização protegida validada](docs/validation/core-launcher-2026-10-23.md).
+- Runtime com ABI diagnóstica e bootstrap precoce dos saves; recusa identidade/payload incompatível antes dos hooks.
 - Núcleo independente para sessões, autoridade, checkpoints, eventos idempotentes e protocolo v2 com envelopes vinculados à sessão, coberto por testes locais.
 - Política de caminhos, armazenamento físico e [interceptação nativa de saves](docs/NATIVE_SAVE_IO.md), com `.co2`, conta preservada, backup e recuperação; validados nos cenários locais do [relatório](docs/validation/native-save-isolation-2026-10-22.md).
 - Sonda de pesquisa separada para observar um endereço candidato no Sekiro já aberto, somente com leitura e identidade exata do executável.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
-O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. O fluxo de integração testado ainda precisa entrar no lançador público; o personagem remoto real, visível e controlável permanece pendente.
+O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. O fluxo está integrado ao lançador para testes explícitos; o personagem remoto real, visível e controlável permanece pendente.
 
 A observação local com RTTI identificou o tipo `WorldChrManImp` no endereço candidato. Isso ajuda a orientar a investigação; não valida o layout de personagens nem implementa um ator remoto. Veja a [pesquisa e suas limitações](docs/RESEARCH.md).
 
@@ -79,7 +79,7 @@ Após compilar, o lançador oferece ajuda e um diagnóstico da DLL dentro do pr�
 .\build\bin\Release\skcoop_launcher.exe --diagnose
 ```
 
-`--inspect` apenas identifica um executável fornecido; `--launch` permanece desativado no lançador público. O teste local dos saves usa um fluxo de integração separado, com proteção adicional dos originais. Sua aprovação não ativa automaticamente gameplay nesse lançador.
+`--inspect` identifica um executável; `--find-game` detecta a instalação Steam. O comando `--launch` permanece desativado para gameplay. O [caminho explícito de integração](docs/LAUNCHER.md), `--steam-start`, usa instalação independente, perfil preparado e proteção adicional dos saves originais. Ele não implementa multiplayer.
 
 ## Contribuir e acompanhar
 
@@ -96,6 +96,6 @@ O [método de pesquisa e testes](docs/WORKFLOW.md) registra as práticas adotada
 
 ## English status
 
-The v1 target is four-player seamless co-op for Windows/Steam. Native save creation, loading, writing and backup recovery have passed controlled local game tests using a private integration harness and additional protection of the original saves. Public launcher integration, remote characters, Steam transport and synchronized combat remain pending. There is no playable co-op release. The percentage above counts accepted functional criteria, not elapsed development time or closed issues.
+The v1 target is four-player seamless co-op for Windows/Steam. The public launcher now starts a protected independent test install through Steam with the save runtime loaded. Native save creation, loading, writing and backup recovery have passed controlled local tests with additional protection of original saves. Remote characters, Steam transport and synchronized combat remain pending. There is no playable co-op release. The percentage above counts accepted functional criteria, not elapsed development time or closed issues.
 
 The project does not redistribute Sekiro, proprietary game files or other mod authors' binaries. It is not affiliated with FromSoftware, Activision, Valve or Yui.
