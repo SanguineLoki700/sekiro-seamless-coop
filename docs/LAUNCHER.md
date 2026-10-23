@@ -6,6 +6,11 @@ Sekiro. Esse caminho foi validado localmente na build 5794815; veja o
 [relatório](validation/core-launcher-2026-10-23.md). Ainda não existe multiplayer
 jogável. O comando `--launch` continua recusando gameplay.
 
+O [critério de compatibilidade do runtime](validation/native-runtime-2026-10-23.md)
+também foi aceito para a build identificada. A distribuição com `.exe` aberto
+por dois cliques e pasta de suporte continua sendo a experiência final planejada;
+o procedimento de desenvolvimento abaixo ainda exige a entrada pela Steam.
+
 ## Instalação identificada
 
 `--find-game` lê `SteamPath` do usuário atual, `libraryfolders.vdf` e o manifesto

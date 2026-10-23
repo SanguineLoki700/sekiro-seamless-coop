@@ -80,11 +80,24 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/2",
           "label": "DLL e compatibilidade verificadas no jogo",
           "weight": 3,
-          "status": "in_progress",
+          "status": "verified",
           "min_players": 1,
           "min_machines": 1,
           "acceptance": "A DLL carrega no executável identificado e recusa versões sem suporte antes de aplicar hooks.",
-          "evidence": null
+          "evidence": {
+            "commit": "533a5863e9afcc333215129dc1ee1ff420ca96dd",
+            "game_executable_sha256": "637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856",
+            "game_version": "Steam 1.06 / 1.6.0.0 / build 5794815",
+            "scenario": "Revisão do carregamento real confirmado em 23/10, com DLL preservada e fontes nativas inalteradas; 17 recusas/controles da guarda, incluindo hash, PE e caminho isolados, antes de TLS e hooks. Sem repetir a sessão manual.",
+            "tested_on": "2026-10-23",
+            "tested_by": "SanguineLoki700 (confirmação no jogo reutilizada do teste do lançador); Codex (revisão, identidade e testes de recusa)",
+            "participants": {
+              "players": 1,
+              "machines": 1
+            },
+            "result": "passed",
+            "report": "docs/validation/native-runtime-2026-10-23.md"
+          }
         },
         {
           "id": "core-save-isolation",
