@@ -21,11 +21,13 @@ target_compile_options(skcoop_windows_options INTERFACE /W4 /permissive- /utf-8 
 add_library(skcoop_launcher_support STATIC
   src/launcher/preflight.cpp
   src/launcher/runtime_loader.cpp
-  src/launcher/process.cpp)
+  src/launcher/process.cpp
+  src/launcher/steam_install.cpp
+  src/launcher/launch_settings.cpp)
 target_include_directories(skcoop_launcher_support PUBLIC include src/launcher)
-target_link_libraries(skcoop_launcher_support PUBLIC skcoop_windows_options bcrypt)
+target_link_libraries(skcoop_launcher_support PUBLIC skcoop_windows_options bcrypt advapi32)
 
-add_library(skcoop_runtime SHARED src/runtime/runtime.cpp)
+add_library(skcoop_runtime SHARED src/runtime/runtime.cpp src/runtime/launch_bootstrap.cpp src/runtime/runtime.def)
 target_include_directories(skcoop_runtime PUBLIC include)
 target_compile_definitions(skcoop_runtime PRIVATE SKCOOP_RUNTIME_BUILD)
 target_link_libraries(skcoop_runtime PRIVATE skcoop_windows_options skcoop_core)
@@ -70,13 +72,14 @@ add_library(skcoop_save_native_io STATIC src/saves/native_io_hooks.cpp)
 target_include_directories(skcoop_save_native_io PUBLIC include src/saves)
 target_link_libraries(skcoop_save_native_io PUBLIC skcoop_save_native_policy skcoop_save_store skcoop_detours shell32)
 target_link_libraries(skcoop_save_bootstrap PRIVATE skcoop_save_native_io)
+target_link_libraries(skcoop_runtime PRIVATE skcoop_save_native_io)
 
 add_library(skcoop_save_bridge STATIC src/saves/save_bridge.cpp)
 target_include_directories(skcoop_save_bridge PUBLIC include)
 target_link_libraries(skcoop_save_bridge PUBLIC skcoop_save_settings skcoop_save_store)
 
-add_executable(skcoop_launcher src/launcher/main.cpp)
-target_link_libraries(skcoop_launcher PRIVATE skcoop_launcher_support skcoop_save_settings)
+add_executable(skcoop_launcher src/launcher/main.cpp src/launcher/protected_launch.cpp)
+target_link_libraries(skcoop_launcher PRIVATE skcoop_launcher_support skcoop_save_settings skcoop_save_store skcoop_detours shell32)
 add_dependencies(skcoop_launcher skcoop_runtime)
 add_custom_target(skcoop_prepare_config ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:skcoop_launcher>/config"
@@ -98,6 +101,24 @@ add_executable(skcoop_probe src/probe/main.cpp)
 target_link_libraries(skcoop_probe PRIVATE skcoop_probe_policy psapi)
 
 if(BUILD_TESTING)
+  add_executable(skcoop_runtime_launch_guard_tests tests/runtime_launch_guard_tests.cpp)
+  target_include_directories(skcoop_runtime_launch_guard_tests PRIVATE include)
+  target_link_libraries(skcoop_runtime_launch_guard_tests PRIVATE skcoop_windows_options skcoop_detours)
+  add_dependencies(skcoop_runtime_launch_guard_tests skcoop_runtime)
+  add_test(NAME runtime_launch_guard_tests COMMAND skcoop_runtime_launch_guard_tests "$<TARGET_FILE:skcoop_runtime>")
+  set_tests_properties(runtime_launch_guard_tests PROPERTIES TIMEOUT 35)
+  add_executable(skcoop_steam_install_tests tests/steam_install_tests.cpp)
+  target_link_libraries(skcoop_steam_install_tests PRIVATE skcoop_launcher_support)
+  add_test(NAME steam_install_discovery_tests COMMAND skcoop_steam_install_tests)
+  set_tests_properties(steam_install_discovery_tests PROPERTIES TIMEOUT 20)
+  add_executable(skcoop_launch_settings_tests tests/launch_settings_tests.cpp)
+  target_link_libraries(skcoop_launch_settings_tests PRIVATE skcoop_launcher_support)
+  add_test(NAME launch_settings_tests COMMAND skcoop_launch_settings_tests)
+  set_tests_properties(launch_settings_tests PROPERTIES TIMEOUT 15)
+  add_executable(skcoop_owned_job_tests tests/owned_job_tests.cpp)
+  target_link_libraries(skcoop_owned_job_tests PRIVATE skcoop_launcher_support)
+  add_test(NAME owned_job_lifecycle_tests COMMAND skcoop_owned_job_tests)
+  set_tests_properties(owned_job_lifecycle_tests PROPERTIES TIMEOUT 30)
   add_executable(skcoop_save_bootstrap_fixture tests/save_bootstrap_fixture.cpp)
   target_include_directories(skcoop_save_bootstrap_fixture PRIVATE include)
   target_link_libraries(skcoop_save_bootstrap_fixture PRIVATE skcoop_windows_options shell32)

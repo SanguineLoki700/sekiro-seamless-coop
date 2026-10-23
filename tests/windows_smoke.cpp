@@ -167,6 +167,12 @@ int smoke_parent(const fs::path& runtime, const fs::path& launcher) {
     require(CopyFileW(fs::absolute(runtime).c_str(), unicode_runtime.c_str(), TRUE), "Cannot prepare Unicode runtime fixture.");
     const auto child_exe = executable_directory() / L"skcoop_windows_smoke.exe";
     require(run_controlled_child(child_exe, {L"--child", unicode_runtime.wstring()}) == 0, "Controlled runtime child failed.");
+    require(run_controlled_child(launcher, {L"--steam-start"}) != 0,
+        "Missing Steam entry arguments were accepted.");
+    require(run_controlled_child(launcher, {L"--check-launch"}) != 0,
+        "Missing protected-launch configuration was accepted.");
+    require(run_controlled_child(launcher, {L"--check-launch", temp.file(L"no-launch.ini").wstring()}) != 0,
+        "Missing protected-launch configuration file was accepted.");
     std::cout << "Windows smoke passed: SHA-256, PE rejection, exact profiles, save settings, launch refusal, Unicode child and runtime ABI.\n";
     return 0;
 }
