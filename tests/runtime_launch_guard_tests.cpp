@@ -2,6 +2,7 @@
 #include <detours.h>
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -112,6 +113,40 @@ public:
     void clear_marker() const {
         if (!DeleteFileW(marker().c_str())) require(GetLastError() == ERROR_FILE_NOT_FOUND, "Cannot clear owned TLS marker.");
     }
+    DWORD replace_fixture_image_size(DWORD replacement) const {
+        // Only this tree's copy of our test program is changed. Giving its PE
+        // the supported image size lets the shipping DLL reach the digest
+        // refusal without any runtime test bypass or a game executable.
+        Handle file(CreateFileW(renamed().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+        require(file.get() != INVALID_HANDLE_VALUE, "Cannot open owned PE fixture for bounded edit.");
+        LARGE_INTEGER size{};
+        require(GetFileSizeEx(file.get(), &size) && size.QuadPart >= static_cast<LONGLONG>(sizeof(IMAGE_DOS_HEADER)),
+            "Owned PE fixture is truncated.");
+        IMAGE_DOS_HEADER dos{};
+        DWORD count = 0;
+        require(ReadFile(file.get(), &dos, sizeof(dos), &count, nullptr) && count == sizeof(dos) &&
+            dos.e_magic == IMAGE_DOS_SIGNATURE && dos.e_lfanew >= 64 && dos.e_lfanew <= 4096 &&
+            static_cast<LONGLONG>(dos.e_lfanew) + static_cast<LONGLONG>(sizeof(IMAGE_NT_HEADERS64)) <= size.QuadPart,
+            "Owned PE fixture has invalid bounded DOS/NT headers.");
+        LARGE_INTEGER position{};
+        position.QuadPart = dos.e_lfanew;
+        IMAGE_NT_HEADERS64 nt{};
+        require(SetFilePointerEx(file.get(), position, nullptr, FILE_BEGIN) &&
+            ReadFile(file.get(), &nt, sizeof(nt), &count, nullptr) && count == sizeof(nt) &&
+            nt.Signature == IMAGE_NT_SIGNATURE && nt.FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
+            nt.FileHeader.SizeOfOptionalHeader == sizeof(IMAGE_OPTIONAL_HEADER64) &&
+            nt.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC,
+            "Owned PE fixture is not native AMD64.");
+        const DWORD previous = nt.OptionalHeader.SizeOfImage;
+        position.QuadPart += offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
+            offsetof(IMAGE_OPTIONAL_HEADER64, SizeOfImage);
+        require(SetFilePointerEx(file.get(), position, nullptr, FILE_BEGIN) &&
+            WriteFile(file.get(), &replacement, sizeof(replacement), &count, nullptr) &&
+            count == sizeof(replacement) && FlushFileBuffers(file.get()),
+            "Cannot update owned fixture image size.");
+        return previous;
+    }
     fs::path parent, root;
 };
 std::wstring quote(std::wstring_view text) {
@@ -180,7 +215,8 @@ void load_from_main(const fs::path& executable, const fs::path& runtime, const T
     require(fs::is_regular_file(tree.marker()), "Controlled executable TLS did not record successful startup.");
 }
 
-enum class Mutation { missing, truncated, size, version, pid, host, zero_nonce, nonce_mismatch, reserved, status_reserved, identity };
+enum class Mutation { missing, truncated, size, version, pid, host, zero_nonce, nonce_mismatch,
+    reserved, status_reserved, identity, digest, pe, path };
 void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation mutation) {
     tree.clear_marker();
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedStatus), nullptr));
@@ -217,12 +253,23 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
     text(payload.solo_roaming, tree.root / L"solo");
     text(payload.coop_roaming, tree.root / L"coop");
     text(payload.account, fs::path(L"12345678901234567"));
+    if (mutation == Mutation::pe || mutation == Mutation::path || mutation == Mutation::digest) {
+        constexpr char supported_hash[] =
+            "637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856";
+        const auto digit = [](char c) { return static_cast<std::uint8_t>(c <= '9' ? c - '0' : c - 'a' + 10); };
+        for (std::size_t i = 0; i < std::size(payload.executable_sha256); ++i)
+            payload.executable_sha256[i] = static_cast<std::uint8_t>(
+                (digit(supported_hash[2 * i]) << 4) | digit(supported_hash[2 * i + 1]));
+    }
+    if (mutation == Mutation::digest) payload.executable_sha256[0] ^= 1;
+    if (mutation == Mutation::path) text(payload.exe_path, tree.root / L"different" / L"sekiro.exe");
     require(DuplicateHandle(GetCurrentProcess(), mapping.get(), process.process.get(), &payload.mapping_handle,
         FILE_MAP_READ | FILE_MAP_WRITE, FALSE, 0) != FALSE &&
         DuplicateHandle(GetCurrentProcess(), event.get(), process.process.get(), &payload.ready_event, EVENT_MODIFY_STATE, FALSE, 0) != FALSE,
         "Cannot duplicate runtime guard IPC into child.");
     // Structurally valid data never authenticates this executable as Sekiro:
-    // its image/hash are deliberately unsupported, and no test bypass exists.
+    // every identity case has an unsupported path, PE, or digest. There is no
+    // test bypass and no payload combines all supported identity fields.
     if (mutation == Mutation::size) --payload.struct_size;
     if (mutation == Mutation::version) ++payload.version;
     if (mutation == Mutation::pid) ++payload.child_pid;
@@ -244,7 +291,8 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
         "Rejected runtime launch reported an installed hook transaction.");
     require(InterlockedCompareExchange(&status->phase, 0, 0) != static_cast<LONG>(Phase::ready),
         "Rejected runtime launch reported READY.");
-    if (mutation == Mutation::identity) {
+    if (mutation == Mutation::identity || mutation == Mutation::digest ||
+        mutation == Mutation::pe || mutation == Mutation::path) {
         require(WaitForSingleObject(event.get(), 0) == WAIT_OBJECT_0 &&
             InterlockedCompareExchange(&status->phase, 0, 0) == static_cast<LONG>(Phase::failed) &&
             InterlockedCompareExchange(&status->fatal_error, 0, 0) == ERROR_INVALID_IMAGE_HASH,
@@ -279,6 +327,27 @@ int wmain(int argc, wchar_t** argv) {
             reject_before_startup(runtime, tree, mutation);
             ++passed;
         }
+        // A declared known hash and matching path cannot authenticate a
+        // different mapped PE image. The fixture still has its original PE.
+        reject_before_startup(runtime, tree, Mutation::pe);
+        ++passed;
+        constexpr DWORD supported_image_size = 0x42d2000;
+        const DWORD fixture_image_size = tree.replace_fixture_image_size(supported_image_size);
+        require(fixture_image_size != supported_image_size, "Owned fixture unexpectedly has the supported game image size.");
+        // Prove the edited fixture still starts and reaches TLS. Loading the
+        // DLL from main without a launch payload must continue to be refused.
+        load_from_main(tree.renamed(), runtime, tree, true);
+        ++passed;
+        // Path and PE checks now pass, but this nonzero digest differs by one
+        // byte from the supported hash and must refuse startup before hooks.
+        reject_before_startup(runtime, tree, Mutation::digest);
+        ++passed;
+        // The edited image size and declared digest now match, but the payload
+        // names a different module path. Never send all three matching fields.
+        reject_before_startup(runtime, tree, Mutation::path);
+        ++passed;
+        require(tree.replace_fixture_image_size(fixture_image_size) == supported_image_size,
+            "Owned fixture image size changed unexpectedly before restoration.");
         std::cout << passed << '/' << passed << " runtime launch guard cases passed; no game executable used.\n";
         return 0;
     } catch (const std::exception& error) {
