@@ -20,6 +20,22 @@ inline constexpr std::uint64_t candidate_slot_size = 8;
 inline constexpr std::size_t rtti_locator_size = 24;
 inline constexpr std::size_t rtti_type_header_size = 16;
 inline constexpr std::size_t rtti_name_limit = 128;
+// Read-only field candidates corroborated in the identified target's loaded
+// code and RTTI on 2026-10-23. See docs/ACTOR_RESEARCH.md. These do not define
+// a complete class layout, a callable API, or a maximum number of players.
+inline constexpr std::uint64_t actor_primary_offset = 0x88;
+inline constexpr std::uint64_t actor_collection_offset = 0x40;
+inline constexpr std::uint64_t actor_record_stride = 0x38;
+inline constexpr std::size_t actor_sample_limit = 8;
+inline constexpr std::int32_t actor_count_limit = 64;
+inline constexpr std::size_t actor_field_limit = 16;
+struct ActorSamplePlan { std::size_t sampled; bool partial; };
+
+std::optional<ActorSamplePlan> actor_sample_plan(std::int32_t count) noexcept;
+std::optional<std::uintptr_t> bounded_actor_field_address(std::uintptr_t object,
+    std::uint64_t offset, std::uint64_t bytes) noexcept;
+std::optional<std::uintptr_t> bounded_actor_record_address(std::uintptr_t array,
+    std::size_t index) noexcept;
 
 bool approved_research_identity(const launcher::ExecutableIdentity& identity) noexcept;
 std::optional<std::uintptr_t> bounded_slot_address(std::uintptr_t module_base,

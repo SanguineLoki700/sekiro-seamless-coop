@@ -6,7 +6,7 @@ Projeto comunitário para criar coop contínua de até **quatro jogadores** em *
 
 Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com/SanguineLoki700/sekiro-seamless-coop).
 
-**Trabalho atual: pesquisa dos personagens.** O [lançador protegido](docs/LAUNCHER.md), a [compatibilidade do runtime](docs/validation/native-runtime-2026-10-23.md) na build suportada e o fluxo de saves estão aceitos. Faltam validar os dados e as funções para controlar personagens, conectar duas máquinas e ampliar para quatro jogadores. A abertura por dois cliques e o pacote final continuam pendentes. Veja as [etapas e quando o jogo precisa estar aberto](docs/ROADMAP.md#etapas-de-execução).
+**Trabalho atual: pesquisa dos personagens.** A [primeira coleta](docs/ACTOR_RESEARCH.md) reconheceu o jogador local e registros selecionados de uma coleção, somente com leitura. O caminho interno de criação foi localizado, mas nenhum segundo personagem foi criado. O [lançador protegido](docs/LAUNCHER.md), a [compatibilidade do runtime](docs/validation/native-runtime-2026-10-23.md) na build suportada e o fluxo de saves estão aceitos. Faltam controlar personagens, conectar duas máquinas e ampliar para quatro jogadores. A abertura por dois cliques e o pacote final continuam pendentes. Veja as [etapas e quando o jogo precisa estar aberto](docs/ROADMAP.md#etapas-de-execução).
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
@@ -41,12 +41,12 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 - Runtime com ABI diagnóstica e bootstrap precoce dos saves; [carregamento e recusas de compatibilidade verificados](docs/validation/native-runtime-2026-10-23.md) antes dos hooks.
 - Núcleo independente para sessões, autoridade, checkpoints, eventos idempotentes e protocolo v2 com envelopes vinculados à sessão, coberto por testes locais.
 - Política de caminhos, armazenamento físico e [interceptação nativa de saves](docs/NATIVE_SAVE_IO.md), com `.co2`, conta preservada, backup e recuperação; validados nos cenários locais do [relatório](docs/validation/native-save-isolation-2026-10-22.md).
-- Sonda de pesquisa separada para observar um endereço candidato no Sekiro já aberto, somente com leitura e identidade exata do executável.
+- Sonda de pesquisa separada com identidade exata e modo [`--actors`](docs/ACTOR_RESEARCH.md#sonda-pública-de-leitura) para conferir campos e tipos selecionados no Sekiro aberto, somente com leitura.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
 O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. O fluxo está integrado ao lançador para testes explícitos; o personagem remoto real, visível e controlável permanece pendente.
 
-A observação local com RTTI identificou o tipo `WorldChrManImp` no endereço candidato. Isso ajuda a orientar a investigação; não valida o layout de personagens nem implementa um ator remoto. Veja a [pesquisa e suas limitações](docs/RESEARCH.md).
+A observação local com RTTI identificou `WorldChrManImp` e `PlayerIns`; a sonda reconferiu o jogador e os registros selecionados sem alterar o jogo. Isso não estabelece o layout completo, criação ou controle de um ator remoto. Veja a [pesquisa de personagens e suas limitações](docs/ACTOR_RESEARCH.md).
 
 ## Produto previsto
 

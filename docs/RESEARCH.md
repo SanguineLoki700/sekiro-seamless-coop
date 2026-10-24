@@ -318,6 +318,27 @@ The owner then confirmed loading a copied private profile, resting, reloading a 
 
 See [native I/O contracts](NATIVE_SAVE_IO.md) and the [acceptance record](validation/native-save-isolation-2026-10-22.md). That record accepts only the four-point save criterion; it does not establish multiplayer, Steam Cloud or an equivalent run without the external protection. Earlier observations above retain their historical scope.
 
+## Native characters — 2026-10-23
+
+In a protected independent test install, the owner loaded the character and
+left it idle. Bounded read-only observations corroborated the primary
+`PlayerIns` at `WorldChrMan+0x88` and selected collection fields at `+0x40`,
+using instruction evidence from the exact target and repeated RTTI checks.
+The public probe now reproduces this limited observation with `--actors`.
+The observed six records contained one primary player pointer and five nulls;
+this is neither a player limit nor a complete actor inventory.
+
+The internal debug-creation path was traced to a typed `CSDebugChrCreator`
+context and a state/action setter. It has not been invoked. Creation lifecycle,
+resource requirements, update thread and remote control remain unresolved.
+No actor hooks or game writes were added. The existing save runtime remained
+active. Alt+F4 yielded exit0 without timeout; original saves were unchanged,
+and the Steam launch option was cleared and checked.
+
+See [the actor research record](ACTOR_RESEARCH.md) for provenance, exact-target
+field limits, REA evidence and next gates. `actors-spawn` is now in progress,
+with no acceptance evidence and no new points: **10% verified** remains.
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)

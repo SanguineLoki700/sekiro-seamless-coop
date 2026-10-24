@@ -3,6 +3,8 @@
 #include <TlHelp32.h>
 #include <Psapi.h>
 #include <array>
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -113,7 +115,13 @@ template<typename Value> bool read_exact(HANDLE process, std::uintptr_t address,
     return ReadProcessMemory(process, reinterpret_cast<const void*>(address), &output, sizeof(output), &received) != FALSE &&
         received == sizeof(output);
 }
-std::optional<std::string> observe_rtti(HANDLE process, std::uintptr_t module_base, std::uint64_t image_size,
+struct RttiObservation {
+    std::string type_name;
+    std::uintptr_t vtable, locator, descriptor;
+    std::uint32_t complete_object_offset;
+    bool operator==(const RttiObservation&) const = default;
+};
+std::optional<RttiObservation> observe_rtti(HANDLE process, std::uintptr_t module_base, std::uint64_t image_size,
     std::uint64_t object, bool region_queried, const MEMORY_BASIC_INFORMATION& region) {
     using namespace skcoop::probe;
     if (!region_queried || !region_contains_readable(reinterpret_cast<std::uintptr_t>(region.BaseAddress),
@@ -130,14 +138,153 @@ std::optional<std::string> observe_rtti(HANDLE process, std::uintptr_t module_ba
     if (!descriptor) return std::nullopt;
     std::array<unsigned char, rtti_type_header_size + rtti_name_limit> type{};
     if (!read_exact(process, *descriptor, type)) return std::nullopt;
-    return rtti_vendor_type_name(std::span<const unsigned char>(type).subspan(rtti_type_header_size));
+    const auto name = rtti_vendor_type_name(std::span<const unsigned char>(type).subspan(rtti_type_header_size));
+    if (!name) return std::nullopt;
+    std::uint32_t adjustment{};
+    std::memcpy(&adjustment, locator.data() + 4, sizeof(adjustment));
+    return RttiObservation{*name, vtable, locator_address, *descriptor, adjustment};
 }
-int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_requested) {
+
+// No heap scan: every request is one selected field or one bounded RTTI object.
+class ActorReader {
+public:
+    ActorReader(HANDLE process, std::uintptr_t base, std::uint64_t size) : process_(process), base_(base), size_(size) {}
+    template<typename Value> Value heap(std::uintptr_t object, std::uint64_t offset = 0) {
+        const auto address = skcoop::probe::bounded_actor_field_address(object, offset, sizeof(Value));
+        if (!address) throw ProbeError(16, "Actor field range is invalid; observation stopped.");
+        Value value{};
+        read(*address, &value, sizeof(value), false);
+        return value;
+    }
+    std::uint64_t record(std::uintptr_t array, std::size_t index) {
+        const auto address = skcoop::probe::bounded_actor_record_address(array, index);
+        if (!address) throw ProbeError(16, "Actor record range is invalid; observation stopped.");
+        return heap<std::uint64_t>(*address);
+    }
+    template<typename Value> Value module(std::uintptr_t address) {
+        if (!skcoop::probe::image_contains(base_, size_, address, sizeof(Value)))
+            throw ProbeError(16, "RTTI/slot range is outside the selected image.");
+        Value value{};
+        read(address, &value, sizeof(value), true);
+        return value;
+    }
+    RttiObservation type(std::uintptr_t object) {
+        using namespace skcoop::probe;
+        const auto vtable = heap<std::uintptr_t>(object);
+        if (vtable < 8 || !image_contains(base_, size_, vtable - 8, 16))
+            throw ProbeError(16, "Actor vtable is not inside the selected image.");
+        const auto locator = module<std::uintptr_t>(vtable - 8);
+        const auto bytes = module<std::array<unsigned char, rtti_locator_size>>(locator);
+        const auto descriptor = rtti_descriptor_address(base_, size_, locator, bytes);
+        if (!descriptor) throw ProbeError(16, "Actor RTTI locator is invalid.");
+        const auto type_bytes = module<std::array<unsigned char, rtti_type_header_size + rtti_name_limit>>(*descriptor);
+        const auto name = rtti_vendor_type_name(std::span<const unsigned char>(type_bytes).subspan(rtti_type_header_size));
+        if (!name) throw ProbeError(16, "Actor RTTI name is unavailable; no type inferred.");
+        std::uint32_t adjustment{};
+        std::memcpy(&adjustment, bytes.data() + 4, sizeof(adjustment));
+        return {*name, vtable, locator, *descriptor, adjustment};
+    }
+    std::size_t heap_bytes() const noexcept { return heap_bytes_; }
+    std::size_t module_bytes() const noexcept { return module_bytes_; }
+private:
+    void read(std::uintptr_t address, void* output, std::size_t bytes, bool in_module) {
+        auto& consumed = in_module ? module_bytes_ : heap_bytes_;
+        const auto budget = in_module ? std::size_t{4096} : std::size_t{512};
+        if (!bytes || bytes > 256 || consumed > budget || bytes > budget - consumed)
+            throw ProbeError(16, "Actor observation read budget exceeded.");
+        std::size_t at = 0;
+        while (at < bytes) {
+            MEMORY_BASIC_INFORMATION region{};
+            const auto current = address + at;
+            if (VirtualQueryEx(process_, reinterpret_cast<const void*>(current), &region, sizeof(region)) != sizeof(region) ||
+                !skcoop::probe::region_contains_readable(reinterpret_cast<std::uintptr_t>(region.BaseAddress),
+                    region.RegionSize, current, 1, region.State, region.Protect))
+                throw ProbeError(16, "Selected actor/RTTI region is not committed and readable.");
+            const auto inside = current - reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+            const auto chunk = std::min<std::size_t>(bytes - at, region.RegionSize - inside);
+            SIZE_T received = 0;
+            if (!ReadProcessMemory(process_, reinterpret_cast<const void*>(current),
+                static_cast<unsigned char*>(output) + at, chunk, &received) || received != chunk)
+                throw ProbeError(16, "Actor observation was incomplete; no partial result accepted.");
+            at += chunk;
+            consumed += chunk;
+        }
+    }
+    HANDLE process_;
+    std::uintptr_t base_;
+    std::uint64_t size_;
+    std::size_t heap_bytes_{}, module_bytes_{};
+};
+
+void observe_actors(HANDLE process, const FILETIME& expected_creation, std::uintptr_t module_base,
+    std::uint64_t image_size, std::uintptr_t slot) {
+    using namespace skcoop::probe;
+    if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT)
+        throw ProbeError(16, "Selected actor process is no longer alive.");
+    ActorReader reader(process, module_base, image_size);
+    const auto manager = reader.module<std::uintptr_t>(slot);
+    const auto manager_type = reader.type(manager);
+    if (manager_type.type_name != ".?AVWorldChrManImp@NS_SPRJ@@" || manager_type.complete_object_offset != 0)
+        throw ProbeError(16, "Selected manager is not the observed WorldChrManImp type.");
+    const auto primary = reader.heap<std::uintptr_t>(manager, actor_primary_offset);
+    const auto primary_type = reader.type(primary);
+    if (primary_type.type_name != ".?AVPlayerIns@NS_SPRJ@@" || primary_type.complete_object_offset != 0)
+        throw ProbeError(16, "Primary candidate is not the observed PlayerIns type.");
+    const auto header = reader.heap<std::array<unsigned char, 16>>(manager, actor_collection_offset);
+    std::int32_t count{};
+    std::uintptr_t array{};
+    std::memcpy(&count, header.data(), sizeof(count));
+    std::memcpy(&array, header.data() + 8, sizeof(array));
+    const auto plan = actor_sample_plan(count);
+    if (!plan) throw ProbeError(16, "Selected actor collection count is outside the observation limit.");
+    struct Entry { std::uintptr_t pointer; std::optional<RttiObservation> type; };
+    std::vector<Entry> entries;
+    bool primary_present = false;
+    for (std::size_t i = 0; i < plan->sampled; ++i) {
+        const auto pointer = reader.record(array, i);
+        std::optional<RttiObservation> type;
+        if (pointer) type = reader.type(pointer);
+        if (pointer == primary) primary_present = true;
+        entries.push_back({pointer, std::move(type)});
+    }
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        if (reader.record(array, i) != entry.pointer ||
+            (entry.type && reader.type(entry.pointer) != *entry.type))
+            throw ProbeError(16, "Selected actor entry changed during observation.");
+    }
+    if (reader.heap<std::array<unsigned char, 16>>(manager, actor_collection_offset) != header ||
+        reader.heap<std::uintptr_t>(manager, actor_primary_offset) != primary ||
+        reader.module<std::uintptr_t>(slot) != manager || reader.type(manager) != manager_type ||
+        reader.type(primary) != primary_type)
+        throw ProbeError(16, "Selected actor links or RTTI changed during observation.");
+    const auto after = creation_time(process);
+    if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT || CompareFileTime(&after, &expected_creation) != 0)
+        throw ProbeError(16, "Selected actor process exited or its lifetime identity changed.");
+
+    std::cout << "actor_observation: read-only selected fields\nactor_manager_type: " << manager_type.type_name
+        << "\nactor_primary_type: " << primary_type.type_name << "\nactor_collection_count: " << count
+        << "\nactor_sampled_slots: " << entries.size() << '\n';
+    boolean("actor_sample_partial", plan->partial);
+    boolean("actor_primary_present_in_sample", primary_present);
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        std::cout << "actor_slot_" << i << "_type: " << (entry.type ? entry.type->type_name : "null") << '\n';
+        std::cout << "actor_slot_" << i << "_same_as_primary: " << (entry.pointer == primary ? "true" : "false") << '\n';
+    }
+    std::cout << "actor_heap_bytes_read: " << reader.heap_bytes() << "\nactor_module_bytes_read: " << reader.module_bytes() << '\n';
+    boolean("actor_selected_links_unchanged", true);
+    std::cout << "actor_limitation: selected slots only; count includes null slots, not player count. Partial means only the prefix was sampled."
+        " No atomic snapshot, allocation lifetime, complete layout, creation/control API or multiplayer is established.\n";
+}
+
+int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_requested, bool actors_requested) {
     using namespace skcoop::probe;
     const auto selected = find_process(identity.path);
     // This is the only handle with memory-read permission. It has no write,
     // operation, thread, debug, process-launch, or termination authority.
-    Handle process(OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, selected.pid));
+    Handle process(OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
+        (actors_requested ? SYNCHRONIZE : 0), FALSE, selected.pid));
     if (!process) throw ProbeError(13, "Read-only process access denied; no elevation or fallback attempted.");
     const auto now = creation_time(process.get());
     if (CompareFileTime(&now, &selected.created) != 0 || !equal_path(process_path(process.get()), identity.path))
@@ -150,6 +297,20 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
     if (module.SizeOfImage != expected_image_size) throw ProbeError(14, "Main module image size differs from the research build.");
     const auto slot = bounded_slot_address(reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll), module.SizeOfImage, candidate_rva);
     if (!slot) throw ProbeError(14, "Research candidate does not fit inside the selected module.");
+    if (actors_requested) {
+        std::cout << "research_probe: read-only\nprocess_id: " << selected.pid << '\n';
+        boolean("exact_disk_hash_match", true);
+        boolean("native_amd64_process", true);
+        boolean("main_module_identity_match", true);
+        boolean("module_image_size_match", true);
+        boolean("native_hooks_implemented", false);
+        boolean("save_isolation_implemented", false);
+        boolean("multiplayer_implemented", false);
+        std::cout << "capability_flags_scope: this read-only probe only, not the injected runtime.\n";
+        observe_actors(process.get(), selected.created, reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll),
+            module.SizeOfImage, *slot);
+        return 0;
+    }
 
     std::uint64_t value = 0;
     SIZE_T received = 0;
@@ -174,10 +335,11 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
     boolean("native_hooks_implemented", false);
     boolean("save_isolation_implemented", false);
     boolean("multiplayer_implemented", false);
+    std::cout << "capability_flags_scope: this read-only probe only, not the injected runtime.\n";
     if (rtti_requested) {
         const auto type_name = observe_rtti(process.get(), reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll),
             module.SizeOfImage, value, queried, region);
-        if (type_name) std::cout << "rtti_type_name: " << *type_name << '\n';
+        if (type_name) std::cout << "rtti_type_name: " << type_name->type_name << '\n';
         else boolean("rtti_unavailable", true);
         std::cout << "rtti_limitation: bounded software type metadata only; no object layout, lifetime, actor, or hook was validated.\n";
     }
@@ -189,14 +351,15 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 2 && std::wstring_view(argv[1]) == L"--help") {
-            std::cout << "skcoop_probe --exe <path-to-the-approved-Sekiro-executable> [--rtti]\n"
+            std::cout << "skcoop_probe --exe <path-to-the-approved-Sekiro-executable> [--rtti | --actors]\n"
                 << "Default: read one eight-byte candidate slot. Optional RTTI: at most five bounded reads total.\n"
+                << "--actors: selected manager/player/collection fields; max 8 slots, 512 heap bytes and 4096 module bytes.\n"
                 << "No launch, injection, hooks, writes, save access, or elevation.\n";
             return 0;
         }
         if ((argc != 3 && argc != 4) || std::wstring_view(argv[1]) != L"--exe" ||
-            (argc == 4 && std::wstring_view(argv[3]) != L"--rtti")) {
-            std::cerr << "Usage: skcoop_probe --exe <path> [--rtti]\n";
+            (argc == 4 && std::wstring_view(argv[3]) != L"--rtti" && std::wstring_view(argv[3]) != L"--actors")) {
+            std::cerr << "Usage: skcoop_probe --exe <path> [--rtti | --actors]\n";
             return 2;
         }
         skcoop::launcher::ExecutableIdentity identity;
@@ -204,7 +367,8 @@ int wmain(int argc, wchar_t** argv) {
         catch (const std::exception&) { throw ProbeError(10, "Selected executable failed read-only PE/hash preflight; no process queried."); }
         if (!skcoop::probe::approved_research_identity(identity))
             throw ProbeError(10, "Selected executable is not the exact approved research build; no process queried.");
-        return probe(identity, argc == 4);
+        const bool actors = argc == 4 && std::wstring_view(argv[3]) == L"--actors";
+        return probe(identity, argc == 4 && !actors, actors);
     } catch (const ProbeError& error) {
         std::cerr << "Probe refused: " << error.what() << '\n';
         return error.code;
