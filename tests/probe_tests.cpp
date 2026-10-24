@@ -41,6 +41,13 @@ int wmain(int argc, wchar_t** argv) {
         require(!region_read_permitted(MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD), "Guard region reported readable.");
         require(!region_read_permitted(MEM_COMMIT, PAGE_NOACCESS), "No-access region reported readable.");
         require(!region_read_permitted(MEM_COMMIT, PAGE_EXECUTE), "Execute-only region reported readable.");
+        require(region_execute_read_permitted(MEM_COMMIT, PAGE_EXECUTE_READ) &&
+            region_execute_read_permitted(MEM_COMMIT, PAGE_EXECUTE_READWRITE) &&
+            region_execute_read_permitted(MEM_COMMIT, PAGE_EXECUTE_WRITECOPY), "Readable executable region rejected.");
+        require(!region_execute_read_permitted(MEM_COMMIT, PAGE_READONLY) &&
+            !region_execute_read_permitted(MEM_COMMIT, PAGE_EXECUTE) &&
+            !region_execute_read_permitted(MEM_COMMIT, PAGE_EXECUTE_READ | PAGE_GUARD) &&
+            !region_execute_read_permitted(MEM_RESERVE, PAGE_EXECUTE_READ), "Non-readable/executable callback page admitted.");
         require(region_contains_readable(base, 16, base + 8, 8, MEM_COMMIT, PAGE_READONLY), "Eight-byte object field rejected.");
         require(!region_contains_readable(base, 16, base + 9, 8, MEM_COMMIT, PAGE_READONLY), "Object field crossed its queried region.");
         require(!image_contains(base, 16, base - 1, 8), "Address below image base admitted.");
@@ -71,6 +78,27 @@ int wmain(int argc, wchar_t** argv) {
         require(!bounded_actor_record_address(base, 8) &&
             !bounded_actor_record_address(base, std::numeric_limits<std::size_t>::max()), "Unbounded actor index admitted.");
         require(!bounded_actor_record_address(0x00007ffffffffffe, 0), "Actor record crossed canonical user bound.");
+        require(creator_table_in_image(base, 64, base), "Exact creator table prefix at image end rejected.");
+        require(creator_table_in_image(base, 65, base + 1), "Creator table last byte inside image rejected.");
+        require(!creator_table_in_image(base, 65, base + 2) && !creator_table_in_image(base, 63, base),
+            "Creator table prefix crossing image end admitted.");
+        require(!creator_table_in_image(base, 64, base - 1) && !creator_table_in_image(0, 64, base),
+            "Creator table outside module range admitted.");
+        require(!creator_table_in_image(std::numeric_limits<std::uintptr_t>::max() - 31, 64,
+            std::numeric_limits<std::uintptr_t>::max() - 31), "Overflowing creator module range admitted.");
+        require(bounded_creator_descriptor_address(base, 3) == base + 48,
+            "Last selected creator descriptor address changed.");
+        require(!bounded_creator_descriptor_address(base, 4) &&
+            !bounded_creator_descriptor_address(base, std::numeric_limits<std::size_t>::max()),
+            "Unbounded creator descriptor index admitted.");
+        constexpr std::uintptr_t highest_user_address = 0x00007fffffffffff;
+        require(bounded_creator_descriptor_address(highest_user_address - 63, 3) == highest_user_address - 15,
+            "Creator prefix ending at the last canonical user byte rejected.");
+        require(!bounded_creator_descriptor_address(highest_user_address - 62, 3) &&
+            !bounded_creator_descriptor_address(std::numeric_limits<std::uintptr_t>::max() - 31, 3),
+            "Creator table last descriptor overflow admitted.");
+        require(!bounded_creator_descriptor_address(0, 0) && !bounded_creator_descriptor_address(0xffff, 3),
+            "Null/low creator table admitted.");
         std::array<unsigned char, rtti_locator_size> locator{};
         word(locator, 0, 1);
         word(locator, 12, 0x400);
@@ -113,6 +141,11 @@ int wmain(int argc, wchar_t** argv) {
             "RTTI option bypassed exact-build preflight.");
         require(skcoop::launcher::run_controlled_child(probe_path, {L"--exe", probe_path.wstring(), L"--actors"}) == 10,
             "Actor option bypassed exact-build preflight.");
+        require(skcoop::launcher::run_controlled_child(probe_path, {L"--exe", probe_path.wstring(), L"--creator"}) == 10,
+            "Creator option bypassed exact-build preflight.");
+        require(skcoop::launcher::run_controlled_child(probe_path,
+            {L"--exe", probe_path.wstring(), L"--creator", L"--actors"}) == 2,
+            "Mutually exclusive observation modes were combined.");
         std::cout << "Probe policy passed: exact build, bounded slot, region flags and wrong-executable refusal. No Sekiro process was queried.\n";
         return 0;
     } catch (const std::exception& error) {
