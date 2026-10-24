@@ -168,6 +168,16 @@ public:
         read(address, &value, sizeof(value), true);
         return value;
     }
+    void require_module_page(std::uintptr_t address, bool executable) const {
+        using namespace skcoop::probe;
+        MEMORY_BASIC_INFORMATION region{};
+        if (!image_contains(base_, size_, address, 1) ||
+            VirtualQueryEx(process_, reinterpret_cast<const void*>(address), &region, sizeof(region)) != sizeof(region) ||
+            !region_contains_readable(reinterpret_cast<std::uintptr_t>(region.BaseAddress),
+                region.RegionSize, address, 1, region.State, region.Protect) ||
+            (executable && !region_execute_read_permitted(region.State, region.Protect)))
+            throw ProbeError(16, "Selected creator target is outside the image or lacks required page access.");
+    }
     RttiObservation type(std::uintptr_t object) {
         using namespace skcoop::probe;
         const auto vtable = heap<std::uintptr_t>(object);
@@ -278,13 +288,116 @@ void observe_actors(HANDLE process, const FILETIME& expected_creation, std::uint
         " No atomic snapshot, allocation lifetime, complete layout, creation/control API or multiplayer is established.\n";
 }
 
-int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_requested, bool actors_requested) {
+void observe_creator(HANDLE process, const FILETIME& expected_creation, std::uintptr_t module_base,
+    std::uint64_t image_size, std::uintptr_t slot) {
+    using namespace skcoop::probe;
+    if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT)
+        throw ProbeError(16, "Selected creator process is no longer alive.");
+    ActorReader reader(process, module_base, image_size);
+    const auto image_address = [&](std::uint64_t rva) {
+        const auto address = bounded_slot_address(module_base, image_size, rva);
+        if (!address) throw ProbeError(16, "Selected creator RVA is outside the image.");
+        return *address;
+    };
+    const auto expected_vtable = image_address(creator_vtable_rva);
+    const auto setter_slot = image_address(creator_vtable_rva + creator_setter_slot);
+    const auto consumer_slot = image_address(creator_vtable_rva + creator_consumer_slot);
+    const auto manager = reader.module<std::uintptr_t>(slot);
+    const auto manager_type = reader.type(manager);
+    if (manager_type.type_name != ".?AVWorldChrManImp@NS_SPRJ@@" || manager_type.complete_object_offset != 0)
+        throw ProbeError(16, "Selected manager is not the observed WorldChrManImp type.");
+    const auto creator = reader.heap<std::uintptr_t>(manager, creator_manager_offset);
+    const auto creator_type = reader.type(creator);
+    if (creator_type.type_name != ".?AVCSDebugChrCreator@NS_SPRJ@@" ||
+        creator_type.complete_object_offset != 0 || creator_type.vtable != expected_vtable)
+        throw ProbeError(16, "Selected creator type, object adjustment or vtable differs from the observed target.");
+    const auto setter = reader.module<std::uintptr_t>(setter_slot);
+    const auto consumer = reader.module<std::uintptr_t>(consumer_slot);
+    if (setter != image_address(creator_setter_rva) || consumer != image_address(creator_consumer_rva))
+        throw ProbeError(16, "Selected creator virtual targets differ from the observed target.");
+    reader.require_module_page(setter, true);
+    reader.require_module_page(consumer, true);
+    const auto table = reader.heap<std::uintptr_t>(creator, creator_table_offset);
+    // The retained consumer reads DWORDs at +0x40/+0x44. Values are observed
+    // without assigning action semantics or invoking that consumer/setter.
+    const auto states = reader.heap<std::array<std::uint32_t, 2>>(creator, creator_state_offset);
+    if (!bounded_creator_descriptor_address(table, creator_descriptor_prefix_count - 1))
+        throw ProbeError(16, "Selected creator table prefix crosses the bounded user range.");
+    const bool table_in_module = creator_table_in_image(module_base, image_size, table);
+    const auto table_last_byte = table + creator_table_prefix_bytes - 1;
+    if (!table_in_module && (image_contains(module_base, image_size, table, 1) ||
+        image_contains(module_base, image_size, table_last_byte, 1)))
+        throw ProbeError(16, "Selected creator table prefix partially overlaps the image; classification refused.");
+    using Descriptor = std::array<std::uintptr_t, 2>; // callback, label; no string read.
+    using Prefix = std::array<Descriptor, creator_descriptor_prefix_count>;
+    static_assert(sizeof(Prefix) == creator_table_prefix_bytes);
+    const auto read_prefix = [&]() {
+        if (table_in_module) return reader.module<Prefix>(table);
+        Prefix prefix{};
+        for (std::size_t i = 0; i < prefix.size(); ++i) {
+            const auto address = bounded_creator_descriptor_address(table, i);
+            if (!address) throw ProbeError(16, "Selected creator descriptor is out of bounds.");
+            prefix[i] = reader.heap<Descriptor>(*address);
+        }
+        return prefix;
+    };
+    const auto validate_targets = [&](const Prefix& prefix) {
+        for (const auto& descriptor : prefix) {
+            if (descriptor[0]) reader.require_module_page(descriptor[0], true);
+            if (descriptor[1]) reader.require_module_page(descriptor[1], false);
+        }
+    };
+    const auto descriptors = read_prefix();
+    validate_targets(descriptors);
+    if (reader.heap<std::uintptr_t>(creator, creator_table_offset) != table ||
+        reader.heap<std::array<std::uint32_t, 2>>(creator, creator_state_offset) != states ||
+        read_prefix() != descriptors || reader.module<std::uintptr_t>(setter_slot) != setter ||
+        reader.module<std::uintptr_t>(consumer_slot) != consumer ||
+        reader.heap<std::uintptr_t>(manager, creator_manager_offset) != creator ||
+        reader.module<std::uintptr_t>(slot) != manager || reader.type(manager) != manager_type ||
+        reader.type(creator) != creator_type)
+        throw ProbeError(16, "Selected creator links, RTTI, states or table changed; retry manually while idle.");
+    validate_targets(descriptors);
+    reader.require_module_page(setter, true);
+    reader.require_module_page(consumer, true);
+    const auto after = creation_time(process);
+    if (WaitForSingleObject(process, 0) != WAIT_TIMEOUT || CompareFileTime(&after, &expected_creation) != 0)
+        throw ProbeError(16, "Selected creator process exited or its lifetime identity changed.");
+
+    const auto rva = [&](const std::string& key, std::uintptr_t address) {
+        std::cout << key << ": ";
+        if (address) std::cout << "0x" << std::hex << address - module_base << std::dec;
+        else std::cout << "null";
+        std::cout << '\n';
+    };
+    std::cout << "creator_observation: read-only selected fields\ncreator_manager_type: " << manager_type.type_name
+        << "\ncreator_type: " << creator_type.type_name << "\ncreator_state_value: " << states[0]
+        << "\ncreator_request_value: " << states[1] << "\ncreator_table_storage: " << (table_in_module ? "module" : "heap")
+        << "\ncreator_descriptor_prefix_sampled: " << descriptors.size() << "\ncreator_total_descriptor_count: unknown\n";
+    if (table_in_module) rva("creator_table_rva", table);
+    rva("creator_vtable_rva", creator_type.vtable);
+    rva("creator_virtual_0x20_rva", setter);
+    rva("creator_virtual_0x48_rva", consumer);
+    for (std::size_t i = 0; i < descriptors.size(); ++i) {
+        rva("creator_descriptor_" + std::to_string(i) + "_callback_rva", descriptors[i][0]);
+        rva("creator_descriptor_" + std::to_string(i) + "_label_rva", descriptors[i][1]);
+    }
+    std::cout << "creator_heap_bytes_read: " << reader.heap_bytes()
+        << "\ncreator_module_bytes_read: " << reader.module_bytes() << '\n';
+    boolean("creator_selected_links_unchanged", true);
+    std::cout << "creator_limitation: four descriptors are only a prefix, not a total state count. Heap means outside the selected image;"
+        " allocation ownership is unknown. No label strings were read. State/request semantics, atomic snapshot, allocation lifetime,"
+        " complete layout, native call contract, actor creation/control and multiplayer remain unverified.\n";
+}
+
+int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_requested, bool actors_requested,
+    bool creator_requested) {
     using namespace skcoop::probe;
     const auto selected = find_process(identity.path);
     // This is the only handle with memory-read permission. It has no write,
     // operation, thread, debug, process-launch, or termination authority.
     Handle process(OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
-        (actors_requested ? SYNCHRONIZE : 0), FALSE, selected.pid));
+        (actors_requested || creator_requested ? SYNCHRONIZE : 0), FALSE, selected.pid));
     if (!process) throw ProbeError(13, "Read-only process access denied; no elevation or fallback attempted.");
     const auto now = creation_time(process.get());
     if (CompareFileTime(&now, &selected.created) != 0 || !equal_path(process_path(process.get()), identity.path))
@@ -297,7 +410,7 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
     if (module.SizeOfImage != expected_image_size) throw ProbeError(14, "Main module image size differs from the research build.");
     const auto slot = bounded_slot_address(reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll), module.SizeOfImage, candidate_rva);
     if (!slot) throw ProbeError(14, "Research candidate does not fit inside the selected module.");
-    if (actors_requested) {
+    if (actors_requested || creator_requested) {
         std::cout << "research_probe: read-only\nprocess_id: " << selected.pid << '\n';
         boolean("exact_disk_hash_match", true);
         boolean("native_amd64_process", true);
@@ -307,8 +420,12 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
         boolean("save_isolation_implemented", false);
         boolean("multiplayer_implemented", false);
         std::cout << "capability_flags_scope: this read-only probe only, not the injected runtime.\n";
-        observe_actors(process.get(), selected.created, reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll),
-            module.SizeOfImage, *slot);
+        if (creator_requested)
+            observe_creator(process.get(), selected.created, reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll),
+                module.SizeOfImage, *slot);
+        else
+            observe_actors(process.get(), selected.created, reinterpret_cast<std::uintptr_t>(module.lpBaseOfDll),
+                module.SizeOfImage, *slot);
         return 0;
     }
 
@@ -351,15 +468,17 @@ int probe(const skcoop::launcher::ExecutableIdentity& identity, bool rtti_reques
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 2 && std::wstring_view(argv[1]) == L"--help") {
-            std::cout << "skcoop_probe --exe <path-to-the-approved-Sekiro-executable> [--rtti | --actors]\n"
+            std::cout << "skcoop_probe --exe <path-to-the-approved-Sekiro-executable> [--rtti | --actors | --creator]\n"
                 << "Default: read one eight-byte candidate slot. Optional RTTI: at most five bounded reads total.\n"
                 << "--actors: selected manager/player/collection fields; max 8 slots, 512 heap bytes and 4096 module bytes.\n"
+                << "--creator: selected creator state/request and 4 descriptor pairs; 512 heap bytes and 4096 module bytes.\n"
                 << "No launch, injection, hooks, writes, save access, or elevation.\n";
             return 0;
         }
         if ((argc != 3 && argc != 4) || std::wstring_view(argv[1]) != L"--exe" ||
-            (argc == 4 && std::wstring_view(argv[3]) != L"--rtti" && std::wstring_view(argv[3]) != L"--actors")) {
-            std::cerr << "Usage: skcoop_probe --exe <path> [--rtti | --actors]\n";
+            (argc == 4 && std::wstring_view(argv[3]) != L"--rtti" && std::wstring_view(argv[3]) != L"--actors" &&
+                std::wstring_view(argv[3]) != L"--creator")) {
+            std::cerr << "Usage: skcoop_probe --exe <path> [--rtti | --actors | --creator]\n";
             return 2;
         }
         skcoop::launcher::ExecutableIdentity identity;
@@ -368,7 +487,8 @@ int wmain(int argc, wchar_t** argv) {
         if (!skcoop::probe::approved_research_identity(identity))
             throw ProbeError(10, "Selected executable is not the exact approved research build; no process queried.");
         const bool actors = argc == 4 && std::wstring_view(argv[3]) == L"--actors";
-        return probe(identity, argc == 4 && !actors, actors);
+        const bool creator = argc == 4 && std::wstring_view(argv[3]) == L"--creator";
+        return probe(identity, argc == 4 && !actors && !creator, actors, creator);
     } catch (const ProbeError& error) {
         std::cerr << "Probe refused: " << error.what() << '\n';
         return error.code;

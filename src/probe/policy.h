@@ -31,16 +31,37 @@ inline constexpr std::int32_t actor_count_limit = 64;
 inline constexpr std::size_t actor_field_limit = 16;
 struct ActorSamplePlan { std::size_t sampled; bool partial; };
 
+// Selected creator links, virtual targets and descriptor shape corroborated in
+// this exact target. See docs/ACTOR_RESEARCH.md. Four descriptors are only a
+// bounded prefix to observe; neither the complete table nor state semantics is
+// established, and these constants do not authorize calling a native function.
+inline constexpr std::uint64_t creator_manager_offset = 0x3148;
+inline constexpr std::uint64_t creator_vtable_rva = 0x2a952a8;
+inline constexpr std::uint64_t creator_table_offset = 8;
+inline constexpr std::uint64_t creator_state_offset = 0x40;
+inline constexpr std::uint64_t creator_setter_slot = 0x20;
+inline constexpr std::uint64_t creator_consumer_slot = 0x48;
+inline constexpr std::uint64_t creator_setter_rva = 0xc103b0;
+inline constexpr std::uint64_t creator_consumer_rva = 0xc0f7a0;
+inline constexpr std::size_t creator_descriptor_prefix_count = 4;
+inline constexpr std::size_t creator_descriptor_stride = 16;
+inline constexpr std::size_t creator_table_prefix_bytes = creator_descriptor_prefix_count * creator_descriptor_stride;
+
 std::optional<ActorSamplePlan> actor_sample_plan(std::int32_t count) noexcept;
 std::optional<std::uintptr_t> bounded_actor_field_address(std::uintptr_t object,
     std::uint64_t offset, std::uint64_t bytes) noexcept;
 std::optional<std::uintptr_t> bounded_actor_record_address(std::uintptr_t array,
+    std::size_t index) noexcept;
+bool creator_table_in_image(std::uintptr_t module_base, std::uint64_t image_size,
+    std::uintptr_t table) noexcept;
+std::optional<std::uintptr_t> bounded_creator_descriptor_address(std::uintptr_t table,
     std::size_t index) noexcept;
 
 bool approved_research_identity(const launcher::ExecutableIdentity& identity) noexcept;
 std::optional<std::uintptr_t> bounded_slot_address(std::uintptr_t module_base,
     std::uint64_t image_size, std::uint64_t rva) noexcept;
 bool region_read_permitted(std::uint32_t state, std::uint32_t protection) noexcept;
+bool region_execute_read_permitted(std::uint32_t state, std::uint32_t protection) noexcept;
 bool image_contains(std::uintptr_t module_base, std::uint64_t image_size,
     std::uintptr_t address, std::uint64_t count) noexcept;
 bool region_contains_readable(std::uintptr_t region_base, std::uint64_t region_size,

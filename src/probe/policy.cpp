@@ -26,6 +26,18 @@ std::optional<std::uintptr_t> bounded_actor_record_address(std::uintptr_t array,
     return bounded_actor_field_address(array, static_cast<std::uint64_t>(index) * actor_record_stride, 8);
 }
 
+bool creator_table_in_image(std::uintptr_t module_base, std::uint64_t image_size,
+    std::uintptr_t table) noexcept {
+    return image_contains(module_base, image_size, table, creator_table_prefix_bytes);
+}
+
+std::optional<std::uintptr_t> bounded_creator_descriptor_address(std::uintptr_t table,
+    std::size_t index) noexcept {
+    if (index >= creator_descriptor_prefix_count) return std::nullopt;
+    return bounded_actor_field_address(table, static_cast<std::uint64_t>(index) * creator_descriptor_stride,
+        creator_descriptor_stride);
+}
+
 bool approved_research_identity(const launcher::ExecutableIdentity& identity) noexcept {
     return identity.machine == IMAGE_FILE_MACHINE_AMD64 && identity.file_size == expected_file_size &&
         identity.sha256 == expected_sha256;
@@ -47,6 +59,18 @@ bool region_read_permitted(std::uint32_t state, std::uint32_t protection) noexce
     case PAGE_READONLY:
     case PAGE_READWRITE:
     case PAGE_WRITECOPY:
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_READWRITE:
+    case PAGE_EXECUTE_WRITECOPY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool region_execute_read_permitted(std::uint32_t state, std::uint32_t protection) noexcept {
+    if (!region_read_permitted(state, protection)) return false;
+    switch (protection & 0xffu) {
     case PAGE_EXECUTE_READ:
     case PAGE_EXECUTE_READWRITE:
     case PAGE_EXECUTE_WRITECOPY:

@@ -1,5 +1,9 @@
 # Personagens: primeira observação nativa
 
+Continuação em [criação de personagens, 24/10](ACTOR_CREATION.md): tabela ligada
+em execução, atualização observada e distinção dos caminhos de `EnemyIns` e
+`PlayerIns` adicional. Este registro preserva a primeira coleta de23/10.
+
 Pesquisa de **23/10/2026**, uma pessoa e uma máquina. A sonda reconheceu o
 jogador local e os registros selecionados de uma coleção do jogo. **Nenhum
 segundo personagem foi criado, movido ou conectado.** O critério
