@@ -339,6 +339,23 @@ See [the actor research record](ACTOR_RESEARCH.md) for provenance, exact-target
 field limits, REA evidence and next gates. `actors-spawn` is now in progress,
 with no acceptance evidence and no new points: **10% verified** remains.
 
+## Native actor creation — 2026-10-24
+
+The new read-only `--creator` probe passed against the protected game. The
+runtime table linked Idle/Load/LoadWait labels to the retained callbacks. An
+eight-second scoped REA/Frida observation counted 480 entries each in the manager
+update and creator consumer on one observed thread, with the expected selected
+return site, no callback errors and confirmed cleanup. That instrumentation
+temporarily modified interception machinery, without invoking game functions.
+
+Further exact-target analysis separated the debug path's `EnemyIns` from a
+`PlayerIns` factory path that searches records starting at index1. The primary
+creation wrapper writes `WorldChrMan+0x88` and is unsuitable for blindly creating
+a guest. A 55-second observation intended to obtain normal creation arguments
+recorded zero events and is inconclusive. No defaults were inferred or sent to
+the game, and no actor was created. Details and Evidence IDs are in
+[the creation research record](ACTOR_CREATION.md). Progress remains 10%.
+
 ## Primary references
 
 - [REA](https://github.com/morluto/rea)
