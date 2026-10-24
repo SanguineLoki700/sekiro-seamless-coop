@@ -4,6 +4,28 @@
 #include <limits>
 
 namespace skcoop::probe {
+std::optional<ActorSamplePlan> actor_sample_plan(std::int32_t count) noexcept {
+    if (count < 0 || count > actor_count_limit) return std::nullopt;
+    const auto total = static_cast<std::size_t>(count);
+    return ActorSamplePlan{std::min(total, actor_sample_limit), total > actor_sample_limit};
+}
+
+std::optional<std::uintptr_t> bounded_actor_field_address(std::uintptr_t object,
+    std::uint64_t offset, std::uint64_t bytes) noexcept {
+    constexpr std::uint64_t highest_user_address = 0x00007fffffffffff;
+    if (object < 0x10000 || object > highest_user_address || bytes == 0 || bytes > actor_field_limit ||
+        offset > highest_user_address - object) return std::nullopt;
+    const auto address = static_cast<std::uint64_t>(object) + offset;
+    if (bytes - 1 > highest_user_address - address) return std::nullopt;
+    return static_cast<std::uintptr_t>(address);
+}
+
+std::optional<std::uintptr_t> bounded_actor_record_address(std::uintptr_t array,
+    std::size_t index) noexcept {
+    if (index >= actor_sample_limit) return std::nullopt;
+    return bounded_actor_field_address(array, static_cast<std::uint64_t>(index) * actor_record_stride, 8);
+}
+
 bool approved_research_identity(const launcher::ExecutableIdentity& identity) noexcept {
     return identity.machine == IMAGE_FILE_MACHINE_AMD64 && identity.file_size == expected_file_size &&
         identity.sha256 == expected_sha256;
