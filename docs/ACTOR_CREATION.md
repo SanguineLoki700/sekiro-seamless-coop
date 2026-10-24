@@ -1,5 +1,9 @@
 # Criação de personagens: tabela, atualização e tipos
 
+Continuação: a [primeira criação local de PlayerIns adicional](validation/local-player-2026-10-24.md)
+foi posteriormente executada e confirmada visualmente. Este documento preserva
+o estado da pesquisa anterior àquela tentativa.
+
 Pesquisa de **24/10/2026**, uma pessoa e uma máquina, na mesma identidade Steam
 1.06/build 5794815 do [primeiro registro](ACTOR_RESEARCH.md). SHA-256 do jogo:
 `637aca527538c0ec6e1f136c8ed66046e95dfbdbb1f51926e134d9916398b856`.
