@@ -135,7 +135,7 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/4",
           "label": "Personagem remoto real e visível",
           "weight": 6,
-          "status": "planned",
+          "status": "in_progress",
           "min_players": 2,
           "min_machines": 2,
           "acceptance": "Duas instalações exibem atores remotos controláveis com modelo, armas e animações, sem substituir o jogador local.",
