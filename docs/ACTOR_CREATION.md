@@ -126,6 +126,8 @@ rotinas, uma criação bem-sucedida ou valores padrão utilizáveis. Evidência:
 Não inferimos que uma ação manual ocorreu dentro da janela a partir da simples
 passagem de tempo. Os próximos testes precisam atingir o caminho real de
 construção e registrar seus argumentos antes de invocar o wrapper adicional.
+O responsável confirmou posteriormente a volta à tela inicial e a recarga;
+essa confirmação não atesta o horário da ação dentro da janela de captura.
 
 ## Proveniência, verificações e próximo gate
 
@@ -134,6 +136,12 @@ o perfil de teste `.co2`, com proteção externa dos originais. Não houve nova
 DLL instalada. Leituras selecionadas revalidaram caminho, hash, módulo, PE,
 vida do processo e páginas; bytes e releituras ficaram sob orçamento de4 MiB
 por coleta. Todos os artefatos proprietários e recibos brutos permanecem privados.
+
+Ao final, o responsável confirmou saída pelo menu e retirada da opção da Steam.
+O host registrou saída0, sem timeout, com saves originais e configuração gráfica
+inalterados. A ausência do jogo/lançador, o campo vazio da Steam e os hashes
+originais foram conferidos separadamente. Não houve restauração de saves nem
+sessão de observação deixada ativa.
 
 REA/Ghidra 12.1.4 analisaram carriers privados de trechos retidos. O carrier de
 código atual tem SHA-256
