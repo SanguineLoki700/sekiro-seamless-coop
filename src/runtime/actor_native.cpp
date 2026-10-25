@@ -26,6 +26,7 @@ launch::Payload lan_launch{};
 lan::Peer* network{}; // Pinned with the runtime. Never join/destroy under the loader lock.
 lan::View network_view{};
 Token source_world{},source_primary{},source_registry{};
+ULONGLONG offered_at{};
 void fail_demo(Error e) noexcept { if(lan_mode)remote_actor.fail(e);else demo.fail(e);if(network)network->request_stop(); }
 volatile LONG entered{};
 DWORD native_thread{};
@@ -358,11 +359,9 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_observed_displacement_mm,static_cast<LONG64>(lan_mode?remote_actor.displacement_mm:demo.observed_displacement_mm));
     InterlockedExchange64(&status->actor_graph_writes,static_cast<LONG64>(graph_writes));
     InterlockedExchange64(&status->actor_graph_nonzero,static_cast<LONG64>(graph_nonzero));
-    if(lan_mode){const auto& n=network_view.status;
-        InterlockedExchange(&status->lan_state,static_cast<LONG>(n.state));InterlockedExchange(&status->lan_error,static_cast<LONG>(n.failure));
-        InterlockedExchange(&status->lan_system_error,static_cast<LONG>(n.system_error));InterlockedExchange(&status->lan_wait,static_cast<LONG>(remote_actor.waiting));
-        InterlockedExchange64(&status->lan_frames_sent,static_cast<LONG64>(n.frames_sent));InterlockedExchange64(&status->lan_frames_received,static_cast<LONG64>(n.frames_received));
-        InterlockedExchange64(&status->lan_rejected,static_cast<LONG64>(n.rejected));InterlockedExchange64(&status->lan_stale_frames,static_cast<LONG64>(remote_actor.stale_frames));
+    if(lan_mode){
+        InterlockedExchange(&status->lan_wait,static_cast<LONG>(remote_actor.waiting));
+        InterlockedExchange64(&status->lan_stale_frames,static_cast<LONG64>(remote_actor.stale_frames));
     }
 }
 void lan_step(void* creator) {
@@ -375,12 +374,16 @@ void lan_step(void* creator) {
         if(down&&!pause_key_down)remote_actor.paused=!remote_actor.paused;pause_key_down=down;
         if(GetAsyncKeyState(VK_F10)&0x8000)remote_actor.stop_requested=true;
     }else pause_key_down=false;
+    if(!armed){
+        if(remote_actor.stop_requested){remote_actor.phase=Phase::stopped;network->request_stop();}
+        return; // No player/graph reads during the title screen or new-game scenes.
+    }
     game.creator=creator;Frame frame{};const bool ready=game.sample(frame)&&frame.primary_ready;
-    if(ready){
+    if(ready&&armed){
         if(!local_loaded){local_loaded=true;source_world=frame.world;source_primary=frame.primary;source_registry=frame.registry;}
         else if(source_world!=frame.world||source_primary!=frame.primary||source_registry!=frame.registry){remote_actor.fail(Error::changed_world);network->request_stop();return;}
-        network->try_offer(game.local_motion());
-    }else if(local_loaded){remote_actor.phase=Phase::stopped;remote_actor.error=Error::changed_world;network->request_stop();return;}
+        if(GetTickCount64()-offered_at>=50){if(network->try_offer(game.local_motion()))offered_at=GetTickCount64();}
+    }else if(!ready&&local_loaded){remote_actor.phase=Phase::stopped;remote_actor.error=Error::changed_world;network->request_stop();return;}
     remote_actor.tick(game,frame,ready,armed,network_view.status.state,network_view.remote.sample(GetTickCount64()));
     if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed)network->request_stop();
 }
@@ -524,6 +527,7 @@ DWORD WINAPI worker(void*) noexcept {
     if(lan_mode){try{
         lan::SessionConfig c;c.role=lan_launch.lan_role==1?lan::Role::host:lan::Role::guest;
         c.ticket=*lan::parse_ticket(lan_launch.lan_ticket);c.participant=lan::random_participant();c.build.purpose=lan::Purpose::native_avatar;
+        if(lan_launch.lan_profile)c.build.adapter=lan::independent_adapter;
         std::copy_n(lan_launch.executable_sha256,32,c.build.game.begin());std::copy_n(lan_launch.scenario_sha256,32,c.build.scenario.begin());
         network=new lan::Peer(std::move(c));SecureZeroMemory(lan_launch.lan_ticket,sizeof(lan_launch.lan_ticket));
     }catch(...){fail_demo(Error::binding);publish();return 0;}}
@@ -553,6 +557,20 @@ DWORD WINAPI worker(void*) noexcept {
     }
     InterlockedOr64(&status->hooks_mask,(demo.native_locomotion && !graph_locomotion)?14:2);
     InterlockedExchange(&entered,0);
+    if(lan_mode){
+        // Publish socket readiness even while the title screen has no world
+        // callbacks. This lets the notebook discover the room before loading.
+        for(;;){const auto view=network->read();const auto& n=view.status;
+            InterlockedExchange(&status->lan_state,static_cast<LONG>(n.state));
+            InterlockedExchange(&status->lan_error,static_cast<LONG>(n.failure));
+            InterlockedExchange(&status->lan_system_error,static_cast<LONG>(n.system_error));
+            InterlockedExchange64(&status->lan_frames_sent,static_cast<LONG64>(n.frames_sent));
+            InterlockedExchange64(&status->lan_frames_received,static_cast<LONG64>(n.frames_received));
+            InterlockedExchange64(&status->lan_rejected,static_cast<LONG64>(n.rejected));
+            if(n.state==lan::State::failed||n.state==lan::State::lost||n.state==lan::State::stopped)break;
+            Sleep(50);
+        }
+    }
     // The callback and immutable original remain pinned until process exit.
     // Stopping the bounded demo disables all actor reads/writes, without freeing actors.
     return 0;

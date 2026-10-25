@@ -6,16 +6,19 @@
 #include "skcoop/save_settings.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <fstream>
 
 namespace {
 void usage() {
-    std::wcout << L"Sekiro co-op 0.0.1-bootstrap diagnostic scaffold (gameplay is unavailable)\n"
+    std::wcout << L"Sekiro co-op experimental native test tools (multiplayer acceptance pending)\n"
         L"  --inspect <exe> [--profiles <ini>]  Read PE headers and SHA-256; never launch\n"
         L"  --diagnose [--runtime <dll>]       Load the selected diagnostic DLL locally\n"
         L"  --inspect-save-profile [ini]      Validate settings; no save/game access\n"
         L"  --self-test                       Run only our controlled smoke-test child\n"
         L"  --find-game                       Detect official Steam installation; no launch\n"
         L"  --check-launch <ini>              Check protected integration configuration\n"
+        L"  --direct-start <ini>              Protected direct test; real Steam client required\n"
+        L"  --prepare-direct <role> <file>    Developer preparation; GUI handles this normally\n"
         L"  --steam-start [ini] <Steam exe>   Explicit protected test, via Steam only\n"
         L"  --launch <exe> [--profiles <ini>]  Preflight, then refuse (not implemented)\n";
 }
@@ -38,6 +41,18 @@ int wmain(int argc, wchar_t** argv) {
         if (command == L"--check-launch") {
             if (argc != 3) throw std::runtime_error("Use --check-launch <protected launch ini>.");
             return check_protected_launch(argv[2]);
+        }
+        if(command==L"--direct-start") {
+            if(argc!=3)throw std::runtime_error("Use --direct-start <prepared launch ini>.");
+            return direct_protected_launch(argv[2]);
+        }
+        if(command==L"--prepare-direct") {
+            if(argc!=4)throw std::runtime_error("Use --prepare-direct <host|guest> <private room file>.");
+            const std::wstring_view role=argv[2];if(role!=L"host"&&role!=L"guest")throw std::runtime_error("Invalid role.");
+            std::ifstream file(std::filesystem::path(argv[3]),std::ios::binary);std::string code;
+            std::getline(file,code);if(!code.empty()&&code.back()=='\r')code.pop_back();
+            if(!file||code.size()>159||file.peek()!=EOF)throw std::runtime_error("Invalid private room file.");
+            std::wcout<<prepare_direct_lan(folder,role==L"host"?1u:2u,code).wstring()<<L'\n';return 0;
         }
         if (command == L"--steam-start") {
             if (argc == 3) return steam_protected_launch(folder / L"config" / L"launch.ini",argv[2]);

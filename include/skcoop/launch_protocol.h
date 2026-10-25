@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=9;
+inline constexpr std::uint32_t protocol_version=10;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -37,8 +37,9 @@ struct Payload {
     ActorTest actor_test;
     std::uint32_t actor_padding;
     std::uint32_t lan_role; // 0 disabled, 1 host, 2 guest; never a Steam identity.
+    std::uint32_t lan_profile; // 0 legacy identical fixture, 1 own persistent test profile.
     char lan_ticket[160]; // Private credential, omitted from receipts.
-    std::uint8_t scenario_sha256[32]; // Controlled identical-save fixture only.
+    std::uint8_t scenario_sha256[32]; // Declared controlled scenario; never a map ID.
     std::uint64_t reserved[4];
 };
 

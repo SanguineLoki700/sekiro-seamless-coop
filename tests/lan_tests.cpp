@@ -1,4 +1,5 @@
 #include "skcoop/lan/peer.hpp"
+#include "skcoop/lan/scenario.hpp"
 #include <Windows.h>
 #include <algorithm>
 #include <cmath>
@@ -36,6 +37,12 @@ void state_machine(){
  Session real({Role::host,t,native,44}),probe({Role::guest,t,{},55});real.opened(1,random_id());probe.opened(1,{});auto challenge=real.take_outgoing();require(!probe.receive(challenge[0],2)&&probe.failure()==Failure::compatibility,"Connection check admitted into native session");
  Session pending({Role::host,t,{},66}),guest({Role::guest,t,{},77});pending.opened(1,random_id());guest.opened(1,{});deliver(pending,guest,2);deliver(guest,pending,3);require(pending.state()!=State::connected,"Host declared success before acknowledgement");
 }
+void independent_profiles(){
+ auto t=ticket();Build build;build.purpose=Purpose::native_avatar;build.adapter=independent_adapter;build.game[0]=1;build.scenario=independent_motion_scenario;
+ Session host({Role::host,t,build,101}),guest({Role::guest,t,build,202});authenticated_pair(host,guest);
+ Motion m=motion();m.descriptor=0xa000;host.send_frame(m);deliver(host,guest,20);require(guest.take_remote().has_value(),"Independent scenario refused movement");
+ auto legacy=build;legacy.adapter=1;legacy.scenario[0]^=1;Session old({Role::host,t,legacy,303}),fresh({Role::guest,t,build,404});old.opened(1,random_id());fresh.opened(1,{});const auto packets=old.take_outgoing();require(!fresh.receive(packets[0],2)&&fresh.failure()==Failure::compatibility,"Legacy save fixture mixed with independent profile");
+}
 void smoothing(){
  MotionBuffer b;auto a=motion(0),c=motion(10);a.rotation[1]=3.1f;c.rotation[1]=-3.1f;a.angle=179;c.angle=-179;
  require(b.push(a,1000,1)==PushResult::accepted&&b.push(c,1200,3)==PushResult::accepted,"Buffer input rejected");
@@ -57,4 +64,4 @@ void loopback(){
  wait([&]{return x.read().status.state==State::failed;});require(x.read().status.failure==Failure::scene,"Loading change not reported");y.stop();x.stop();
 }
 }
-int main(){try{codec();state_machine();smoothing();loopback();std::cout<<"PASS authenticated framing, incarnation/replay rejection, stale-motion release and actual loopback peers\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{codec();state_machine();smoothing();independent_profiles();loopback();std::cout<<"PASS authenticated framing, incarnation/replay rejection, stale-motion release and actual loopback peers\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

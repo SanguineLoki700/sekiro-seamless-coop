@@ -33,7 +33,7 @@ std::string hex(std::span<const std::uint8_t> a){constexpr char h[]="0123456789a
 template<std::size_t N>bool unhex(std::string_view s,std::array<std::uint8_t,N>& out){if(s.size()!=N*2)return false;for(std::size_t i=0;i<N;++i){unsigned v{};const auto r=std::from_chars(s.data()+i*2,s.data()+i*2+2,v,16);if(r.ec!=std::errc{}||r.ptr!=s.data()+i*2+2)return false;out[i]=static_cast<std::uint8_t>(v);}return true;}
 template<std::size_t N>std::array<std::uint8_t,N> random(){std::array<std::uint8_t,N> a{};do{if(BCryptGenRandom(nullptr,a.data(),static_cast<ULONG>(N),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0)throw std::runtime_error("LAN random source failed");}while(!nonzero(a));return a;}
 }
-bool valid(const Build& b)noexcept{return b.adapter==1&&((b.purpose==Purpose::connection_check&&!nonzero(b.game)&&!nonzero(b.scenario))||(b.purpose==Purpose::native_avatar&&nonzero(b.game)&&nonzero(b.scenario)));}
+bool valid(const Build& b)noexcept{return (b.purpose==Purpose::connection_check&&b.adapter==1&&!nonzero(b.game)&&!nonzero(b.scenario))||(b.purpose==Purpose::native_avatar&&(b.adapter==1||b.adapter==2)&&nonzero(b.game)&&nonzero(b.scenario));}
 bool valid(const Motion& m)noexcept{
  if(!m.epoch||!std::isfinite(m.speed)||m.speed<0||m.speed>1||!std::isfinite(m.angle)||std::abs(m.angle)>360)return false;
  for(float f:m.position)if(!std::isfinite(f)||std::abs(f)>=1e7f)return false;

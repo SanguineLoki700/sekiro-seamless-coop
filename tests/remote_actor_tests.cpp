@@ -20,6 +20,8 @@ skcoop::lan::Smoothed remote(){skcoop::lan::Motion m;m.epoch=9;m.descriptor=0xa0
 int main(){try{
  {skcoop::launch::Payload p{};require(valid_lan_payload(p));p.lan_role=1;require(!valid_lan_payload(p));p.actor_test=skcoop::launch::ActorTest::lan;require(!valid_lan_payload(p));
   p.scenario_sha256[0]=1;const auto code=skcoop::lan::ticket_text({"127.0.0.1",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});std::copy(code.begin(),code.end(),p.lan_ticket);require(valid_lan_payload(p));
+  p.lan_profile=1;require(!valid_lan_payload(p));std::copy(skcoop::lan::independent_motion_scenario.begin(),skcoop::lan::independent_motion_scenario.end(),p.scenario_sha256);require(valid_lan_payload(p));
+  p.lan_profile=2;require(!valid_lan_payload(p));p.lan_profile=1;
   p.lan_ticket[159]='x';require(!valid_lan_payload(p));}
  {Fake g;RemoteActor d;g.tick(d,{},skcoop::lan::State::connected,300);require(g.creates==0&&g.writes==0&&g.local_commands==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connecting,300);require(g.creates==0);m.motion.position={0,0,0};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::separation);m.motion.position={0,0,30};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::area);}

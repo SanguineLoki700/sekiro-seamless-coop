@@ -117,6 +117,7 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else if (key == L"actor_test") bit = 16;
         else if (key == L"lan_role") bit = 32;
         else if (key == L"lan_code") bit = 64;
+        else if (key == L"lan_profile") bit = 128;
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
         if (bit == 16) {
@@ -126,6 +127,8 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
             result.actor_pad_reference_test = value == L"pad-reference";
             result.actor_graph_locomotion_test = value == L"graph-locomotion";
             result.actor_lan_test = value == L"lan";
+        } else if(bit==128) {
+            if(value!=L"independent")invalid("Unknown LAN profile mode.");result.independent_profile=true;
         } else if(bit==32) {
             if(value!=L"host"&&value!=L"guest") invalid("LAN role must be host or guest.");
             result.lan_role=value==L"host"?1u:2u;
@@ -146,6 +149,7 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
     }
     if (!section || (seen & 15) != 15) invalid("All four [LAUNCH] keys are required.");
     if(result.actor_lan_test ? (seen&96)!=96 : (seen&96)!=0)invalid("LAN mode requires both LAN settings; other modes forbid them.");
+    if(!result.actor_lan_test&&(seen&128))invalid("Independent profile requires LAN mode.");
     return result;
 }
 
