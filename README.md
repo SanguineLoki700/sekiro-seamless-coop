@@ -10,6 +10,8 @@ Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com
 
 A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md) encontrou custo elevado nas atualizações e uma falha no limite da coleta que encerrava o teste. Há correções; a avaliação de desempenho continua pendente. Nenhum desses experimentos representa multiplayer entre máquinas.
 
+**Protótipo LAN:** transporte autenticado, adaptador de movimento recebido e assistente Windows implementados. O [verificador e pacote do notebook](docs/LAN_TEST.md) passaram nos testes independentes; dois Sekiros reais ainda precisam de validação. O percentual continua em 10%.
+
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
 ## Progresso verificável

@@ -1,5 +1,8 @@
 #include "actor_native.h"
 #include "actor_demo.h"
+#include "remote_actor.h"
+#include "lan_payload.h"
+#include "skcoop/lan/peer.hpp"
 #include "region_queries.h"
 #include "locomotion_input.h"
 #include "vtable_slot.h"
@@ -17,6 +20,13 @@ namespace {
 std::uintptr_t base{};
 launch::SharedStatus* status{};
 Demo demo;
+RemoteActor remote_actor;
+bool lan_mode{},local_loaded{};
+launch::Payload lan_launch{};
+lan::Peer* network{}; // Pinned with the runtime. Never join/destroy under the loader lock.
+lan::View network_view{};
+Token source_world{},source_primary{},source_registry{};
+void fail_demo(Error e) noexcept { if(lan_mode)remote_actor.fail(e);else demo.fail(e);if(network)network->request_stop(); }
 volatile LONG entered{};
 DWORD native_thread{};
 bool armed{};
@@ -82,7 +92,7 @@ Vector native_vector(std::uintptr_t rva, Token p) {
     reinterpret_cast<Getter>(base+rva)(reinterpret_cast<void*>(p),v.data());
     return v;
 }
-class NativeGame final : public Game {
+class NativeGame final : public RemoteGame {
 public:
     void* creator{};
     Frame frame{};
@@ -214,6 +224,46 @@ public:
         if(!std::isfinite(observed)||std::abs(observed-bounded_speed)>.01f) { set(&guest_speed,0);++graph_writes;throw InputFailure{Error::input_value}; }
         if(bounded_speed>.001f)++graph_nonzero;
     }
+    lan::Motion local_motion() {
+        lan::Motion motion;motion.epoch=1;motion.descriptor=frame.field_handle;
+        const auto rotation=native_vector(0x9eec10,frame.primary);
+        std::copy_n(frame.position.begin(),3,motion.position.begin());std::copy_n(rotation.begin(),3,motion.rotation.begin());
+        const auto speed=graph_variable(frame.primary,2,213),angle=graph_variable(frame.primary,1,209);
+        const auto get=reinterpret_cast<ReadGraphFloat>(base+0xff3250);
+        const float value=get(&speed);motion.angle=get(&angle);
+        if(!std::isfinite(value)||value<0||value>2.1f)throw InputFailure{Error::input_value};
+        motion.speed=std::min(value,1.f);
+        if(!lan::valid(motion))throw InputFailure{Error::input_value};return motion;
+    }
+    void remote_motion(Token actor,const lan::Motion& motion) override {
+        const auto primary=frame.primary;
+        if(actor==primary || pointer(frame.world+0x88)!=primary || pointer(frame.registry)!=primary ||
+           pointer(frame.registry+0x38)!=actor || !typed(actor,0x2a2b338))throw InputFailure{Error::input_owner};
+        const auto destination=pointer(actor+0x58),source=pointer(primary+0x58);
+        if(!typed(destination,0x29d2ae0)||!typed(source,0x29d4b30)||pointer(destination+0x300)!=actor||pointer(source+0x300)!=primary)
+            throw InputFailure{Error::input_owner};
+        const auto speed=graph_variable(actor,2,213),angle=graph_variable(actor,1,209),owner=graph_variable(primary,2,213);
+        if(speed.character==owner.character||speed.overrides==owner.overrides)throw InputFailure{Error::input_owner};
+        const auto set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
+        set(&speed,0);set(&angle,0);graph_writes+=2;
+        for(const auto offset:{0x20u,0x40u}) {
+            MEMORY_BASIC_INFORMATION page{};
+            if(!readable(destination+offset,16)||!regions.query(destination+offset,page)||
+               ((page.Protect&0xff)!=PAGE_READWRITE&&(page.Protect&0xff)!=PAGE_WRITECOPY))throw InputFailure{Error::input_range};
+        }
+        const Vector zero{};std::memcpy(reinterpret_cast<void*>(destination+0x20),zero.data(),16);
+        if(!motion.epoch){++zero_commands;return;} // Internal release, not a wire frame.
+        if(!lan::valid(motion))throw InputFailure{Error::input_value};
+        LocomotionInput orientation{};std::copy(motion.rotation.begin(),motion.rotation.end(),orientation.rotation_target.begin());
+        if(!relative_rotation(orientation.rotation_target,native_vector(0x9eec10,actor),orientation.rotation_delta)||!valid_locomotion_input(orientation))
+            throw InputFailure{Error::input_value};
+        std::memcpy(reinterpret_cast<void*>(destination+0x20),orientation.rotation_delta.data(),16);
+        std::memcpy(reinterpret_cast<void*>(destination+0x40),orientation.rotation_target.data(),16);
+        set(&speed,motion.speed);set(&angle,motion.angle);graph_writes+=2;
+        const auto observed=reinterpret_cast<ReadGraphFloat>(base+0xff3250)(&speed);
+        if(!std::isfinite(observed)||std::abs(observed-motion.speed)>.01f){set(&speed,0);++graph_writes;throw InputFailure{Error::input_value};}
+        if(motion.speed>.001f)++graph_nonzero;
+    }
     void capture_locomotion(void* controller,void* component) {
         const auto p=frame.primary, source=reinterpret_cast<std::uintptr_t>(controller);
         if(pointer(frame.world+0x88)!=p || pointer(p+0x58)!=source || pointer(p+0x50)!=reinterpret_cast<std::uintptr_t>(component) ||
@@ -285,13 +335,13 @@ public:
 };
 NativeGame game;
 void publish() noexcept {
-    InterlockedExchange(&status->actor_phase,static_cast<LONG>(demo.phase));
-    InterlockedExchange(&status->actor_error,static_cast<LONG>(demo.error));
+    InterlockedExchange(&status->actor_phase,static_cast<LONG>(lan_mode?remote_actor.phase:demo.phase));
+    InterlockedExchange(&status->actor_error,static_cast<LONG>(lan_mode?remote_actor.error:demo.error));
     InterlockedExchange64(&status->actor_creation_calls,static_cast<LONG64>(creation_calls));
-    InterlockedExchange64(&status->actor_ticks,static_cast<LONG64>(demo.ticks));
-    InterlockedExchange64(&status->actor_pose_writes,static_cast<LONG64>(demo.pose_writes));
-    InterlockedExchange(&status->actor_motion_paused,demo.motion_paused?1:0);
-    InterlockedExchange64(&status->actor_creation_attempts,static_cast<LONG64>(demo.creation_calls));
+    InterlockedExchange64(&status->actor_ticks,static_cast<LONG64>(lan_mode?remote_actor.ticks:demo.ticks));
+    InterlockedExchange64(&status->actor_pose_writes,static_cast<LONG64>(lan_mode?remote_actor.pose_writes:demo.pose_writes));
+    InterlockedExchange(&status->actor_motion_paused,(lan_mode?remote_actor.paused:demo.motion_paused)?1:0);
+    InterlockedExchange64(&status->actor_creation_attempts,static_cast<LONG64>(lan_mode?remote_actor.creation_calls:demo.creation_calls));
     InterlockedExchange64(&status->actor_world_callbacks,static_cast<LONG64>(world_callbacks));
     InterlockedExchange64(&status->actor_callback_total_us,static_cast<LONG64>(callback_total_us));
     InterlockedExchange64(&status->actor_callback_max_us,static_cast<LONG64>(callback_max_us));
@@ -305,12 +355,38 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_source_nonzero,static_cast<LONG64>(source_nonzero));
     InterlockedExchange64(&status->actor_action_finalizes,static_cast<LONG64>(action_finalizes));
     InterlockedExchange64(&status->actor_invalid_deltas,static_cast<LONG64>(invalid_deltas));
-    InterlockedExchange64(&status->actor_observed_displacement_mm,static_cast<LONG64>(demo.observed_displacement_mm));
+    InterlockedExchange64(&status->actor_observed_displacement_mm,static_cast<LONG64>(lan_mode?remote_actor.displacement_mm:demo.observed_displacement_mm));
     InterlockedExchange64(&status->actor_graph_writes,static_cast<LONG64>(graph_writes));
     InterlockedExchange64(&status->actor_graph_nonzero,static_cast<LONG64>(graph_nonzero));
+    if(lan_mode){const auto& n=network_view.status;
+        InterlockedExchange(&status->lan_state,static_cast<LONG>(n.state));InterlockedExchange(&status->lan_error,static_cast<LONG>(n.failure));
+        InterlockedExchange(&status->lan_system_error,static_cast<LONG>(n.system_error));InterlockedExchange(&status->lan_wait,static_cast<LONG>(remote_actor.waiting));
+        InterlockedExchange64(&status->lan_frames_sent,static_cast<LONG64>(n.frames_sent));InterlockedExchange64(&status->lan_frames_received,static_cast<LONG64>(n.frames_received));
+        InterlockedExchange64(&status->lan_rejected,static_cast<LONG64>(n.rejected));InterlockedExchange64(&status->lan_stale_frames,static_cast<LONG64>(remote_actor.stale_frames));
+    }
+}
+void lan_step(void* creator) {
+    network->try_read(network_view);
+    if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed){network->request_stop();return;}
+    DWORD foreground{};GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
+    if(foreground==GetCurrentProcessId()){
+        if(GetAsyncKeyState(VK_F8)&0x8000)armed=true;
+        const bool down=(GetAsyncKeyState(VK_F9)&0x8000)!=0;
+        if(down&&!pause_key_down)remote_actor.paused=!remote_actor.paused;pause_key_down=down;
+        if(GetAsyncKeyState(VK_F10)&0x8000)remote_actor.stop_requested=true;
+    }else pause_key_down=false;
+    game.creator=creator;Frame frame{};const bool ready=game.sample(frame)&&frame.primary_ready;
+    if(ready){
+        if(!local_loaded){local_loaded=true;source_world=frame.world;source_primary=frame.primary;source_registry=frame.registry;}
+        else if(source_world!=frame.world||source_primary!=frame.primary||source_registry!=frame.registry){remote_actor.fail(Error::changed_world);network->request_stop();return;}
+        network->try_offer(game.local_motion());
+    }else if(local_loaded){remote_actor.phase=Phase::stopped;remote_actor.error=Error::changed_world;network->request_stop();return;}
+    remote_actor.tick(game,frame,ready,armed,network_view.status.state,network_view.remote.sample(GetTickCount64()));
+    if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed)network->request_stop();
 }
 void step(void* creator) noexcept {
     try {
+        if(lan_mode){lan_step(creator);return;}
         if (demo.phase==Phase::stopped || demo.phase==Phase::failed) return;
         DWORD foreground_pid{};
         GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
@@ -324,32 +400,32 @@ void step(void* creator) noexcept {
             pause_key_down=down;
             if (GetAsyncKeyState(VK_F10)&0x8000) demo.stop_requested=true;
         } else pause_key_down=false;
-        if (!demo.creation_calls && GetTickCount64()-armed_at>10000) { demo.fail(Error::binding); return; }
+        if (!demo.creation_calls && GetTickCount64()-armed_at>10000) { fail_demo(Error::binding); return; }
         game.creator=creator; demo.tick(game);
         if(demo.phase==Phase::stopped || demo.phase==Phase::failed)game.disarm();
     }
-    catch (const InputFailure& e) { demo.fail(e.error); game.disarm(); }
-    catch (...) { demo.fail(Error::binding); game.disarm(); }
+    catch (const InputFailure& e) { fail_demo(e.error); game.disarm(); }
+    catch (...) { fail_demo(Error::binding); game.disarm(); }
 }
 void guarded_step(void* creator) noexcept {
     __try { step(creator); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fail_demo(Error::native_fault); game.disarm(); }
 }
 void controller_step(void* controller,float delta,void* component) noexcept {
     try {
         ++controller_callbacks;
         if(!bound_actor || pointer(bound_actor+0x50)!=reinterpret_cast<std::uintptr_t>(component) ||
             pointer(bound_actor+0x58)!=reinterpret_cast<std::uintptr_t>(controller)) {
-            ++controller_context_errors; demo.fail(Error::input_owner); game.disarm(); return;
+            ++controller_context_errors; fail_demo(Error::input_owner); game.disarm(); return;
         }
         if(!valid_update_delta(delta)) { ++invalid_deltas; game.apply_locomotion(bound_actor,false); return; }
         game.apply_locomotion(bound_actor,input_enabled && GetTickCount64()<=input_deadline,delta);
-    } catch(const InputFailure& e) { demo.fail(e.error); game.disarm(); }
-    catch(...) { demo.fail(Error::binding); game.disarm(); }
+    } catch(const InputFailure& e) { fail_demo(e.error); game.disarm(); }
+    catch(...) { fail_demo(Error::binding); game.disarm(); }
 }
 void guarded_controller_step(void* controller,float delta,void* component) noexcept {
     __try { controller_step(controller,delta,component); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fail_demo(Error::native_fault); game.disarm(); }
 }
 void controller_update(void* controller,float delta,void* component) {
     original_controller_update(controller,delta,component);
@@ -363,12 +439,12 @@ void controller_update(void* controller,float delta,void* component) {
 }
 void source_step(void* controller,void* component) noexcept {
     try { game.capture_locomotion(controller,component); }
-    catch(const InputFailure& e) { demo.fail(e.error); game.disarm(); }
-    catch(...) { demo.fail(Error::binding); game.disarm(); }
+    catch(const InputFailure& e) { fail_demo(e.error); game.disarm(); }
+    catch(...) { fail_demo(Error::binding); game.disarm(); }
 }
 void guarded_source_step(void* controller,void* component) noexcept {
     __try { source_step(controller,component); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fail_demo(Error::native_fault); game.disarm(); }
 }
 void source_update(void* controller,float delta,void* component) {
     original_source_update(controller,delta,component);
@@ -388,7 +464,7 @@ void update(void* creator, void* frame) {
         previous_tick=start;
         const auto thread=GetCurrentThreadId();
         if (!native_thread) native_thread=thread;
-        if (native_thread!=thread) demo.fail(Error::binding);
+        if (native_thread!=thread) fail_demo(Error::binding);
         else { regions.begin(); guarded_step(creator); regions.end(); }
         const auto duration=microseconds(clock_ticks()-start);
         callback_total_us+=duration; callback_max_us=std::max(callback_max_us,duration);
@@ -438,35 +514,41 @@ bool anchors_match() noexcept {
     return true;
 }
 DWORD WINAPI worker(void*) noexcept {
-    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0) { demo.fail(Error::binding); publish(); return 0; }
+    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0) { fail_demo(Error::binding); publish(); return 0; }
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const auto start=GetTickCount64();
     while (!anchors_match()) {
-        if (GetTickCount64()-start>=180000) { demo.fail(Error::hook_timeout); publish(); return 0; }
+        if (GetTickCount64()-start>=180000) { fail_demo(Error::hook_timeout); publish(); return 0; }
         Sleep(250);
     }
+    if(lan_mode){try{
+        lan::SessionConfig c;c.role=lan_launch.lan_role==1?lan::Role::host:lan::Role::guest;
+        c.ticket=*lan::parse_ticket(lan_launch.lan_ticket);c.participant=lan::random_participant();c.build.purpose=lan::Purpose::native_avatar;
+        std::copy_n(lan_launch.executable_sha256,32,c.build.game.begin());std::copy_n(lan_launch.scenario_sha256,32,c.build.scenario.begin());
+        network=new lan::Peer(std::move(c));SecureZeroMemory(lan_launch.lan_ticket,sizeof(lan_launch.lan_ticket));
+    }catch(...){fail_demo(Error::binding);publish();return 0;}}
     auto* slot=reinterpret_cast<void* volatile*>(base+creator_vtable+0x48);
     if (!readable(reinterpret_cast<std::uintptr_t>(slot),sizeof(void*)) ||
-        *slot!=reinterpret_cast<void*>(base+consumer)) { demo.fail(Error::hook_conflict); publish(); return 0; }
+        *slot!=reinterpret_cast<void*>(base+consumer)) { fail_demo(Error::hook_conflict); publish(); return 0; }
     original_update=reinterpret_cast<Update>(base+consumer);
     // Prevent callback work until page protection and hook ownership are settled.
     InterlockedExchange(&entered,1);
     if(!exchange_vtable_slot(slot,reinterpret_cast<void*>(original_update),reinterpret_cast<void*>(&update))) {
-        demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
+        fail_demo(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
     }
     if(demo.native_locomotion && !graph_locomotion) {
         auto* controller_slot=reinterpret_cast<void* volatile*>(base+0x29d2ae0+0x48);
         original_controller_update=reinterpret_cast<ControllerUpdate>(base+0x7e3de0);
         if(!exchange_vtable_slot(controller_slot,reinterpret_cast<void*>(original_controller_update),reinterpret_cast<void*>(&controller_update))) {
             exchange_vtable_slot(slot,reinterpret_cast<void*>(&update),reinterpret_cast<void*>(original_update));
-            demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
+            fail_demo(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
         }
         auto* source_slot=reinterpret_cast<void* volatile*>(base+0x29d4b30+0x48);
         original_source_update=reinterpret_cast<ControllerUpdate>(base+0x7ef120);
         if(!exchange_vtable_slot(source_slot,reinterpret_cast<void*>(original_source_update),reinterpret_cast<void*>(&source_update))) {
             exchange_vtable_slot(controller_slot,reinterpret_cast<void*>(&controller_update),reinterpret_cast<void*>(original_controller_update));
             exchange_vtable_slot(slot,reinterpret_cast<void*>(&update),reinterpret_cast<void*>(original_update));
-            demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
+            fail_demo(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
         }
     }
     InterlockedOr64(&status->hooks_mask,(demo.native_locomotion && !graph_locomotion)?14:2);
@@ -476,10 +558,12 @@ DWORD WINAPI worker(void*) noexcept {
     return 0;
 }
 } // namespace
-bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode) noexcept {
+bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode,const launch::Payload* config) noexcept {
     if (status || !shared) return false;
+    lan_mode=mode==launch::ActorTest::lan;
+    if(lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
     status=shared;
-    graph_locomotion=mode==launch::ActorTest::graph_locomotion;
+    graph_locomotion=mode==launch::ActorTest::graph_locomotion||lan_mode;
     demo.native_locomotion=mode==launch::ActorTest::locomotion || graph_locomotion;
     demo.native_pad_reference=mode==launch::ActorTest::pad_reference;
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(Phase::waiting));

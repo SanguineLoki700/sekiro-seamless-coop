@@ -18,6 +18,10 @@ add_library(skcoop_windows_options INTERFACE)
 target_compile_definitions(skcoop_windows_options INTERFACE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_compile_options(skcoop_windows_options INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus)
 
+add_library(skcoop_lan STATIC src/lan/protocol.cpp src/lan/session.cpp src/lan/peer.cpp)
+target_include_directories(skcoop_lan PUBLIC include)
+target_link_libraries(skcoop_lan PUBLIC skcoop_windows_options skcoop_core bcrypt ws2_32 iphlpapi)
+
 add_library(skcoop_launcher_support STATIC
   src/launcher/preflight.cpp
   src/launcher/runtime_loader.cpp
@@ -25,11 +29,13 @@ add_library(skcoop_launcher_support STATIC
   src/launcher/steam_install.cpp
   src/launcher/launch_settings.cpp)
 target_include_directories(skcoop_launcher_support PUBLIC include src/launcher)
-target_link_libraries(skcoop_launcher_support PUBLIC skcoop_windows_options bcrypt advapi32)
+target_link_libraries(skcoop_launcher_support PUBLIC skcoop_windows_options skcoop_lan bcrypt advapi32)
+add_executable(skcoop_lan_check WIN32 src/lan_check/main.cpp)
+target_link_libraries(skcoop_lan_check PRIVATE skcoop_lan user32 gdi32 shell32)
 
-add_library(skcoop_actor_demo STATIC src/runtime/actor_demo.cpp)
+add_library(skcoop_actor_demo STATIC src/runtime/actor_demo.cpp src/runtime/remote_actor.cpp)
 target_include_directories(skcoop_actor_demo PUBLIC src/runtime)
-target_link_libraries(skcoop_actor_demo PUBLIC skcoop_windows_options)
+target_link_libraries(skcoop_actor_demo PUBLIC skcoop_windows_options skcoop_lan)
 add_library(skcoop_runtime SHARED src/runtime/runtime.cpp src/runtime/launch_bootstrap.cpp src/runtime/actor_native.cpp src/runtime/runtime.def)
 target_include_directories(skcoop_runtime PUBLIC include)
 target_compile_definitions(skcoop_runtime PRIVATE SKCOOP_RUNTIME_BUILD)
@@ -81,8 +87,11 @@ add_library(skcoop_save_bridge STATIC src/saves/save_bridge.cpp)
 target_include_directories(skcoop_save_bridge PUBLIC include)
 target_link_libraries(skcoop_save_bridge PUBLIC skcoop_save_settings skcoop_save_store)
 
-add_executable(skcoop_launcher src/launcher/main.cpp src/launcher/protected_launch.cpp)
-target_link_libraries(skcoop_launcher PRIVATE skcoop_launcher_support skcoop_save_settings skcoop_save_store skcoop_detours shell32)
+add_library(skcoop_protected_launcher STATIC src/launcher/protected_launch.cpp)
+target_link_libraries(skcoop_protected_launcher PUBLIC skcoop_launcher_support skcoop_save_settings skcoop_save_store skcoop_detours shell32)
+add_executable(skcoop_launcher src/launcher/main.cpp)
+target_link_libraries(skcoop_launcher PRIVATE skcoop_protected_launcher)
+target_link_libraries(skcoop_lan_check PRIVATE skcoop_protected_launcher)
 add_dependencies(skcoop_launcher skcoop_runtime)
 add_custom_target(skcoop_prepare_config ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:skcoop_launcher>/config"
@@ -104,6 +113,20 @@ add_executable(skcoop_probe src/probe/main.cpp)
 target_link_libraries(skcoop_probe PRIVATE skcoop_probe_policy psapi)
 
 if(BUILD_TESTING)
+  add_executable(skcoop_lan_fixture tests/lan_fixture.cpp)
+  target_link_libraries(skcoop_lan_fixture PRIVATE skcoop_lan)
+  add_executable(skcoop_lan_process_tests tests/lan_process_tests.cpp)
+  target_link_libraries(skcoop_lan_process_tests PRIVATE skcoop_lan)
+  add_dependencies(skcoop_lan_process_tests skcoop_lan_check)
+  add_test(NAME lan_two_process_checker_tests COMMAND skcoop_lan_process_tests "$<TARGET_FILE:skcoop_lan_check>")
+  set_tests_properties(lan_two_process_checker_tests PROPERTIES TIMEOUT 30)
+  add_executable(skcoop_lan_tests tests/lan_tests.cpp)
+  target_link_libraries(skcoop_lan_tests PRIVATE skcoop_lan)
+  add_test(NAME lan_authenticated_transport_tests COMMAND skcoop_lan_tests)
+  set_tests_properties(lan_authenticated_transport_tests PROPERTIES TIMEOUT 40)
+  add_executable(skcoop_remote_actor_tests tests/remote_actor_tests.cpp)
+  target_link_libraries(skcoop_remote_actor_tests PRIVATE skcoop_actor_demo)
+  add_test(NAME remote_actor_policy_tests COMMAND skcoop_remote_actor_tests)
   add_executable(skcoop_vtable_slot_tests tests/vtable_slot_tests.cpp)
   target_include_directories(skcoop_vtable_slot_tests PRIVATE src/runtime)
   target_link_libraries(skcoop_vtable_slot_tests PRIVATE skcoop_windows_options)
