@@ -121,13 +121,26 @@ o runtime somente observa o deslocamento; não aplica acompanhamento por posiç�
 entrada espelhada, solicitação de movimento ou finalização de ações. O próprio
 motor executa o controlador do pad. O payload privado dessa referência é7.
 
-**É uma referência local, ainda não validada no jogo, que lê o mesmo teclado.**
+**É uma referência local, que lê o mesmo teclado e ainda não produziu caminhada.**
 O controlador nativo pode continuar lendo entrada até o jogo fechar. F9 não
 pausa esse controlador; F10 e o limite de dois minutos encerram somente a nossa
 observação. O teste deve ser curto, em lugar seguro, seguido de saída pelo menu.
 O contador de deslocamento observado não usa setters de posição na fase de
 caminhada. Confirmar animação exige a observação do participante.
 
-Esta comparação testa a hipótese de uma limitação do controlador básico;
-o tipo do controlador ainda não foi estabelecido como causa da falha anterior.
-Não representa controle remoto nem muda o percentual verificado.
+No teste dessa referência, o participante viu somente giro na direção da câmera.
+O registro confirmou uma criação, um posicionamento e deslocamento posterior
+zero, com saída0 e saves/gráficos originais inalterados. Portanto o controlador
+básico não foi estabelecido como causa: trocar para o completo não resolveu.
+
+Uma coleta posterior, somente de leitura, registrou155 amostras durante a
+caminhada confirmada pelo participante. O original se deslocou5,84 unidades;
+o adicional permaneceu no mesmo ponto. Ambos tiveram56 amostras com direção
+não nula e solicitação de movimento. A flag selecionada de bloqueio de movimento
+estava limpa nos dois. Ambos tinham módulos de comportamento do mesmo tipo,
+donos corretos e valor1 no campo de velocidade de animação pesquisado. Isso
+restringe a investigação, mas não estabelece uma causa nem um setter seguro.
+
+A próxima verificação é a instância de comportamento/animação e as ligações
+de suas variáveis, antes de tentar mais alterações na entrada. A referência
+não representa controle remoto nem muda o percentual verificado.
