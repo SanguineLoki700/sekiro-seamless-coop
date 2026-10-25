@@ -68,9 +68,13 @@ void Demo::tick(Game& game) {
         phase = Phase::following;
         return;
     }
-    if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= 120000 || f.milliseconds - last_ms_ > 250) {
+    if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= 120000) {
         if (native_locomotion) game.command_locomotion(actor_,false);
         phase = Phase::stopped; return;
+    }
+    if(f.milliseconds-last_ms_>250) {
+        if(native_locomotion) { game.command_locomotion(actor_,false); last_ms_=f.milliseconds; return; }
+        phase=Phase::stopped; return;
     }
     if (native_locomotion) {
         last_ms_=f.milliseconds;

@@ -29,7 +29,8 @@ saltos, ataques e reprodução de IDs de animação permanecem fora desta tentat
 O modo é explícito e desligado por padrão. Depois de F8, cria e posiciona o ator
 como no teste anterior. Após o assentamento, lê os quatro vetores do controlador
 do original e os escreve apenas no controlador próprio do ator adicional. A
-orientação acompanha os valores do original; esta etapa espelha a entrada local.
+orientação usa o alvo do original e o delta calculado a partir da rotação atual
+do próprio ator adicional; esta etapa espelha a entrada local.
 O posicionamento repetido por setter fica desativado durante essa fase.
 
 Na primeira rodada desse modo (payload4), o participante relatou que o ator
@@ -43,7 +44,9 @@ adicional (slot9 da vtable base), depois do método original. Os demais objetos
 passam pelo método original. O componente recebido precisa ser o componente do
 ator registrado; os vínculos e campos são reconferidos antes das escritas. O
 callback do mundo publica uma intenção com validade de250ms, além do orçamento
-geral. Esta revisão ainda precisa de teste no jogo.
+geral. O teste dessa revisão (payload5) registrou724 callbacks do controlador,
+sem recusas de contexto, mas o participante continuou vendo o ator parado.
+Isso não aceitou caminhada nem animação.
 
 O caminho nativo do pad também solicita movimento em `0xb2bf40`: a análise da
 rotina mostrou que ela altera somente o bit0 em módulo+`0x184`. O getter base
@@ -51,8 +54,28 @@ rotina mostrou que ela altera somente o bit0 em módulo+`0x184`. O getter base
 ator+`0x1ff8` → módulo+`0x80`. O RTTI dos módulos de origem e destino foi observado
 como `SprjChrActionRequestModule`, em objetos distintos. A revisão combina a
 entrada com essa solicitação apenas no módulo do guest e solta a solicitação
-ao pausar/parar. Não chama os wrappers globais de animação encontrados nas
-referências externas.
+ao pausar/parar. Não chama os wrappers de animação encontrados nas referências
+externas, cujo contexto de uso ainda não foi estabelecido para este ator.
+
+Uma observação posterior do jogador original, durante caminhada confirmada pelo
+participante, registrou deslocamento de4,45 unidades e vetores não nulos nos
+campos selecionados. Os períodos anteriores sem entrada, alguns durante ausência
+do participante, não foram tratados como prova de campos incorretos. Evidência
+REA privada: `ev_c0000115f14f3687fb91be31c227b272f43863e4644b152748c5e8f1ad8a01fa`.
+
+A revisão6 corrige a assinatura do slot9: o segundo argumento é um `float` no
+registrador XMM1 e o terceiro é o componente em R8. A revisão anterior o declarou
+como ponteiro; uma tentativa privada posterior de desreferenciá-lo falhou antes
+de executar a finalização. O callback do criador do mundo tem assinatura
+diferente e continua recebendo o ponteiro de tempo original.
+
+Esta revisão captura a entrada após o método nativo do pad original e mantém
+uma amostra com validade de250ms para o callback do ator adicional. Depois da
+solicitação, chama `0xb2c190` com um objeto de tempo de16 bytes na própria pilha,
+como o pad nativo faz: vtable em0, delta em8. Preserva o tempo de movimento
+acumulado entre quadros ativos; uma soltura o limpa. Nenhum ponteiro de pilha é
+retido. O getter de rotação `0x9eec10` permite calcular o menor giro até o alvo,
+com ajuste ao atravessar ±pi. **Esta revisão6 ainda precisa de teste no jogo.**
 
 Antes de escrever, confere o mundo, registros, tipos dos dois atores,
 controladores distintos e seus ponteiros de dono. Todos os campos de destino
@@ -64,10 +87,15 @@ F9 zera movimento e delta de orientação enquanto pausa; F10 solicita parada e
 zera a entrada após reconferir os vínculos. O término do orçamento temporal
 também solta a entrada. Uma troca de mundo/registro interrompe os comandos sem
 escrever em um objeto antigo. A DLL continua fixa até a saída do processo; não
-há despawn individual implementado. O payload/status privado da revisão passa
-à versão5; contadores distinguem callbacks do controlador e recusas de contexto.
+há despawn individual implementado. Na locomoção, uma lacuna de mais de250ms
+solta a entrada por um quadro e permite retomar; não encerra permanentemente o
+experimento por causa de uma alternância de janela. O orçamento total de dois
+minutos continua valendo. O payload/status privado passa à versão6; contadores
+distinguem captura de entrada, amostras com movimento, finalizações e deltas
+inválidos, além das recusas de contexto.
 
 Testes independentes cobrem limites dos vetores, ausência de setters de posição
 na fase de locomoção, pausa, retomada, soltura da entrada na parada/expiração e
-recusa de configurações malformadas. Somente um teste real pode confirmar
+recusa de configurações malformadas, passagem de float em XMM1 e giro ao cruzar
+±pi. Somente um teste real pode confirmar
 caminhada, giro e retorno à postura parada. O total da v1 continua10%.

@@ -3,6 +3,7 @@
 #include "region_queries.h"
 #include "locomotion_input.h"
 #include "vtable_slot.h"
+#include "controller_update_abi.h"
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
@@ -23,10 +24,15 @@ bool pause_key_down{};
 std::uint64_t creation_calls{}, world_callbacks{}, callback_total_us{}, callback_max_us{}, factory_us{}, max_interval_us{}, previous_tick{};
 std::uint64_t locomotion_writes{},zero_commands{};
 std::uint64_t controller_callbacks{},controller_context_errors{};
+std::uint64_t source_captures{},source_nonzero{},action_finalizes{},invalid_deltas{};
 void* volatile bound_controller{};
+void* volatile bound_source{};
 Token bound_actor{};
 bool input_enabled{};
 ULONGLONG input_deadline{};
+LocomotionInput captured_input{};
+ULONGLONG captured_at{};
+bool captured_valid{};
 LARGE_INTEGER frequency{};
 RegionQueries regions;
 struct InputFailure { Error error; };
@@ -36,8 +42,8 @@ std::uint64_t microseconds(std::uint64_t ticks) noexcept {
 }
 using Update = void (*)(void*, void*);
 Update original_update{};
-using ControllerUpdate=void (*)(void*,void*,void*);
 ControllerUpdate original_controller_update{};
+ControllerUpdate original_source_update{};
 constexpr std::uintptr_t creator_vtable = 0x2a952a8;
 constexpr std::uintptr_t consumer = 0xc0f7a0;
 
@@ -140,14 +146,26 @@ public:
         reinterpret_cast<Setter>(base+0x9f6320)(reinterpret_cast<void*>(p),aligned.data());
     }
     void command_locomotion(Token actor,bool enabled) override {
+        const auto source=reinterpret_cast<void*>(pointer(frame.primary+0x58));
+        if(actor!=bound_actor || source!=InterlockedCompareExchangePointer(&bound_source,nullptr,nullptr))captured_valid=false;
         bound_actor=actor; input_enabled=enabled; input_deadline=GetTickCount64()+250;
+        InterlockedExchangePointer(&bound_source,source);
         InterlockedExchangePointer(&bound_controller,reinterpret_cast<void*>(pointer(actor+0x58)));
         // Release on the world callback too, so a stopped controller cannot keep
         // a previous input latched. Active input is applied at its native phase.
         if(!enabled)apply_locomotion(actor,false);
     }
-    void disarm() noexcept { InterlockedExchangePointer(&bound_controller,nullptr); bound_actor=0; input_enabled=false; }
-    void apply_locomotion(Token actor,bool enabled) {
+    void disarm() noexcept { InterlockedExchangePointer(&bound_controller,nullptr); InterlockedExchangePointer(&bound_source,nullptr); bound_actor=0; input_enabled=false; captured_valid=false; }
+    void capture_locomotion(void* controller,void* component) {
+        const auto p=frame.primary, source=reinterpret_cast<std::uintptr_t>(controller);
+        if(pointer(frame.world+0x88)!=p || pointer(p+0x58)!=source || pointer(p+0x50)!=reinterpret_cast<std::uintptr_t>(component) ||
+            !typed(source,0x29d4b30) || pointer(source+0x300)!=p)throw InputFailure{Error::input_owner};
+        const LocomotionInput input{read<Vector>(source+0x10),read<Vector>(source+0x20),read<Vector>(source+0x40),read<Vector>(source+0xc0)};
+        if(!valid_locomotion_input(input))throw InputFailure{Error::input_value};
+        captured_input=input; captured_at=GetTickCount64(); captured_valid=true; ++source_captures;
+        if(std::hypot(input.direction[0],input.direction[1],input.direction[2])>.001f)++source_nonzero;
+    }
+    void apply_locomotion(Token actor,bool enabled,float delta=-1.f) {
         // Derived from retained native PadManipulator 7f1710, corroborated by
         // base reset 7e3510. Only the owned additional base manipulator is written.
         const auto primary=frame.primary;
@@ -161,11 +179,19 @@ public:
         const auto action=pointer(root+0x80), primary_action=pointer(primary_root+0x80);
         if(!action || action==primary_action || !typed(action,0x2a729d8))throw InputFailure{Error::input_owner};
         MEMORY_BASIC_INFORMATION action_page{};
-        if(!readable(action+0x184,4) || !regions.query(action+0x184,action_page) ||
+        if(!readable(action,0x1b8) || !regions.query(action,action_page) ||
             ((action_page.Protect&0xff)!=PAGE_READWRITE && (action_page.Protect&0xff)!=PAGE_WRITECOPY))
             throw InputFailure{Error::input_range};
         using SetMoving=void (*)(void*,unsigned);
         const auto set_moving=reinterpret_cast<SetMoving>(base+0xb2bf40);
+        const auto finalize=[&] {
+            if(valid_update_delta(delta)) {
+                const NativeUpdateTime time{base+0x2948018,delta,0};
+                using Finalize=void (*)(void*,const NativeUpdateTime*);
+                reinterpret_cast<Finalize>(base+0xb2c190)(reinterpret_cast<void*>(action),&time);
+                ++action_finalizes;
+            }
+        };
         const std::uintptr_t fields[]{0x10,0x20,0x40,0xc0};
         for(const auto offset:fields) {
             MEMORY_BASIC_INFORMATION m{};
@@ -178,15 +204,24 @@ public:
         for(const auto offset:{0x10u,0x20u,0xc0u})
             std::memcpy(reinterpret_cast<void*>(destination+offset),zero.data(),16);
         set_moving(reinterpret_cast<void*>(action),0);
-        if(!enabled) { ++zero_commands; return; }
-        const LocomotionInput input{read<Vector>(source+0x10),read<Vector>(source+0x20),
-            read<Vector>(source+0x40),read<Vector>(source+0xc0)};
-        if(!valid_locomotion_input(input))throw InputFailure{Error::input_value};
+        // Preserve accumulated movement time across active frames. A release
+        // outside the input callback cannot reuse a dead stack time object.
+        const auto release_time=[&] {
+            if(valid_update_delta(delta))finalize();
+            else { const float zero_time=0; std::memcpy(reinterpret_cast<void*>(action+0x16c),&zero_time,sizeof(zero_time)); }
+        };
+        if(!enabled || !captured_valid || GetTickCount64()-captured_at>250) { release_time(); ++zero_commands; return; }
+        auto input=captured_input;
+        if(!relative_rotation(input.rotation_target,native_vector(0x9eec10,actor),input.rotation_delta)) {
+            release_time(); throw InputFailure{Error::input_value};
+        }
+        if(!valid_locomotion_input(input)) { release_time(); throw InputFailure{Error::input_value}; }
         const Vector* values[]{&input.direction,&input.rotation_delta,&input.rotation_target,&input.direction_copy};
         for(std::size_t i=0;i<std::size(fields);++i)
             std::memcpy(reinterpret_cast<void*>(destination+fields[i]),values[i]->data(),16);
         const bool moving=std::hypot(input.direction[0],input.direction[1],input.direction[2])>.001f;
         set_moving(reinterpret_cast<void*>(action),moving?1u:0u);
+        finalize();
         ++locomotion_writes;
     }
 };
@@ -208,6 +243,10 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_zero_commands,static_cast<LONG64>(zero_commands));
     InterlockedExchange64(&status->actor_controller_callbacks,static_cast<LONG64>(controller_callbacks));
     InterlockedExchange64(&status->actor_controller_context_errors,static_cast<LONG64>(controller_context_errors));
+    InterlockedExchange64(&status->actor_source_captures,static_cast<LONG64>(source_captures));
+    InterlockedExchange64(&status->actor_source_nonzero,static_cast<LONG64>(source_nonzero));
+    InterlockedExchange64(&status->actor_action_finalizes,static_cast<LONG64>(action_finalizes));
+    InterlockedExchange64(&status->actor_invalid_deltas,static_cast<LONG64>(invalid_deltas));
 }
 void step(void* creator) noexcept {
     try {
@@ -235,30 +274,47 @@ void guarded_step(void* creator) noexcept {
     __try { step(creator); }
     __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
 }
-void controller_step(void* controller,void* component) noexcept {
+void controller_step(void* controller,float delta,void* component) noexcept {
     try {
         ++controller_callbacks;
         if(!bound_actor || pointer(bound_actor+0x50)!=reinterpret_cast<std::uintptr_t>(component) ||
             pointer(bound_actor+0x58)!=reinterpret_cast<std::uintptr_t>(controller)) {
             ++controller_context_errors; demo.fail(Error::input_owner); game.disarm(); return;
         }
-        if(GetTickCount64()>input_deadline) {
-            game.apply_locomotion(bound_actor,false); demo.phase=Phase::stopped; game.disarm(); return;
-        }
-        game.apply_locomotion(bound_actor,input_enabled);
+        if(!valid_update_delta(delta)) { ++invalid_deltas; game.apply_locomotion(bound_actor,false); return; }
+        game.apply_locomotion(bound_actor,input_enabled && GetTickCount64()<=input_deadline,delta);
     } catch(const InputFailure& e) { demo.fail(e.error); game.disarm(); }
     catch(...) { demo.fail(Error::binding); game.disarm(); }
 }
-void guarded_controller_step(void* controller,void* component) noexcept {
-    __try { controller_step(controller,component); }
+void guarded_controller_step(void* controller,float delta,void* component) noexcept {
+    __try { controller_step(controller,delta,component); }
     __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
 }
-void controller_update(void* controller,void* frame,void* component) {
-    original_controller_update(controller,frame,component);
+void controller_update(void* controller,float delta,void* component) {
+    original_controller_update(controller,delta,component);
     if(controller!=InterlockedCompareExchangePointer(&bound_controller,nullptr,nullptr) ||
         InterlockedCompareExchange(&entered,1,0)!=0)return;
     const auto start=clock_ticks();
-    regions.begin(); guarded_controller_step(controller,component); regions.end();
+    regions.begin(); guarded_controller_step(controller,delta,component); regions.end();
+    const auto duration=microseconds(clock_ticks()-start);
+    callback_total_us+=duration; callback_max_us=std::max(callback_max_us,duration);
+    publish(); InterlockedExchange(&entered,0);
+}
+void source_step(void* controller,void* component) noexcept {
+    try { game.capture_locomotion(controller,component); }
+    catch(const InputFailure& e) { demo.fail(e.error); game.disarm(); }
+    catch(...) { demo.fail(Error::binding); game.disarm(); }
+}
+void guarded_source_step(void* controller,void* component) noexcept {
+    __try { source_step(controller,component); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { demo.fail(Error::native_fault); game.disarm(); }
+}
+void source_update(void* controller,float delta,void* component) {
+    original_source_update(controller,delta,component);
+    if(controller!=InterlockedCompareExchangePointer(&bound_source,nullptr,nullptr) ||
+        InterlockedCompareExchange(&entered,1,0)!=0)return;
+    const auto start=clock_ticks();
+    regions.begin(); guarded_source_step(controller,component); regions.end();
     const auto duration=microseconds(clock_ticks()-start);
     callback_total_us+=duration; callback_max_us=std::max(callback_max_us,duration);
     publish(); InterlockedExchange(&entered,0);
@@ -288,12 +344,15 @@ constexpr Anchor anchors[]{
     {0xa49460,"991a45851ffef6489fbb8955d680f424c1cf752079c2bc76f2e505a98827526f"},
     {0x9f0870,"56adb9feaddc38abdd4a2e2a2ce735fcf2136f20ccc8c4b58cd335005f5065bb"},
     {0x9eeb40,"8e783b451d7df60c638925306c10b7e42fd10c83f94fd9d0fc5cee184b118802"},
+    {0x9eec10,"28962beb35cd012561e0e23e1d7fa1445deba0bb35656de49d2d2cdc8be434b7"},
     {0x9f6320,"40d2bce47fa15ca88b903bf018e28b259446104de897b2e51d0c9f39bbaf4923"},
     {0x7e3de0,"28f844b5972c241e804231b0e41b93e13696e59b98dde74f19029386db5da0c5"},
-    {0xb2bf40,"7e7e6d4f07320116567792377469ff2cdfaa9abe230eb61a966eda546daf7523"}};
+    {0xb2bf40,"7e7e6d4f07320116567792377469ff2cdfaa9abe230eb61a966eda546daf7523"},
+    {0xb2c190,"f068456947a65bdfe685853cf78b386c90f6d32471ff6ecbe28e096fe159f94c"},
+    {0x7ef120,"2daffff079e5d1f821e4d889c46ae5086df5270825d6af4543e72822e809af22"}};
 bool anchors_match() noexcept {
     for (const auto& a:anchors) {
-        if(!demo.native_locomotion && (a.rva==0x7e3de0 || a.rva==0xb2bf40))continue;
+        if(!demo.native_locomotion && (a.rva==0x7e3de0 || a.rva==0xb2bf40 || a.rva==0xb2c190 || a.rva==0x7ef120))continue;
         if (!readable(base+a.rva,16,true)) return false;
         std::array<unsigned char,32> digest{};
         if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,reinterpret_cast<PUCHAR>(base+a.rva),16,
@@ -328,8 +387,15 @@ DWORD WINAPI worker(void*) noexcept {
             exchange_vtable_slot(slot,reinterpret_cast<void*>(&update),reinterpret_cast<void*>(original_update));
             demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
         }
+        auto* source_slot=reinterpret_cast<void* volatile*>(base+0x29d4b30+0x48);
+        original_source_update=reinterpret_cast<ControllerUpdate>(base+0x7ef120);
+        if(!exchange_vtable_slot(source_slot,reinterpret_cast<void*>(original_source_update),reinterpret_cast<void*>(&source_update))) {
+            exchange_vtable_slot(controller_slot,reinterpret_cast<void*>(&controller_update),reinterpret_cast<void*>(original_controller_update));
+            exchange_vtable_slot(slot,reinterpret_cast<void*>(&update),reinterpret_cast<void*>(original_update));
+            demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
+        }
     }
-    InterlockedOr64(&status->hooks_mask,demo.native_locomotion?6:2);
+    InterlockedOr64(&status->hooks_mask,demo.native_locomotion?14:2);
     InterlockedExchange(&entered,0);
     // The callback and immutable original remain pinned until process exit.
     // Stopping the bounded demo disables all actor reads/writes, without freeing actors.

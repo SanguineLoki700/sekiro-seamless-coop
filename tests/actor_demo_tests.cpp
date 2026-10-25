@@ -29,6 +29,13 @@ int main() {
           input.direction_copy[3]=1; require(!valid_locomotion_input(input)); input.direction_copy[3]=0;
           input.direction[0]=2; require(!valid_locomotion_input(input)); input.direction[0]=0;
           input.rotation_delta[1]=std::numeric_limits<float>::quiet_NaN(); require(!valid_locomotion_input(input)); }
+        { Vector delta{9,9,9,9};
+          require(relative_rotation({0,-3.1f,0,0},{0,3.1f,0,0},delta));
+          require(delta[1]>.08f && delta[1]<.09f && delta[3]==0);
+          require(relative_rotation({0,3.1f,0,0},{0,-3.1f,0,0},delta));
+          require(delta[1]<-.08f && delta[1]>-.09f);
+          require(relative_rotation({0,1.f,0,0},{0,1.f,0,0},delta) && delta==Vector{});
+          require(!relative_rotation({0,0,0,0},{0,std::numeric_limits<float>::infinity(),0,0},delta)); }
         { Demo d; Fake g; g.available=false; g.tick(d,100); require(g.calls==0); g.available=true; following(d,g);
           const auto before=g.guest; g.f.position[0]=3; g.tick(d); require(g.guest[0]>before[0] && g.guest[0]<=.0961f);
           const auto n=g.writes; g.tick(d,40); require(g.writes>n && g.calls==1); }
@@ -61,7 +68,9 @@ int main() {
           d.stop_requested=true; g.tick(d); require(!g.locomotion_active && d.phase==Phase::stopped);
           const auto n=g.locomotion_commands; g.tick(d,10); require(g.locomotion_commands==n); }
         { Demo d; Fake g; d.native_locomotion=true; following(d,g); g.tick(d);
-          g.f.milliseconds+=500; g.tick(d); require(!g.locomotion_active && d.phase==Phase::stopped); }
+          g.f.milliseconds+=500; g.tick(d); require(!g.locomotion_active && d.phase==Phase::following);
+          g.tick(d); require(g.locomotion_active);
+          g.f.milliseconds+=120000; g.tick(d); require(!g.locomotion_active && d.phase==Phase::stopped); }
         std::cout<<"PASS local actor failure, scene lifetime, bounded movement and no-retry scenarios\n";
     } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

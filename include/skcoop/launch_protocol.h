@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=5;
+inline constexpr std::uint32_t protocol_version=6;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -87,6 +87,10 @@ struct alignas(8) SharedStatus {
     volatile LONG64 actor_zero_commands;
     volatile LONG64 actor_controller_callbacks;
     volatile LONG64 actor_controller_context_errors;
+    volatile LONG64 actor_source_captures;
+    volatile LONG64 actor_source_nonzero;
+    volatile LONG64 actor_action_finalizes;
+    volatile LONG64 actor_invalid_deltas;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);

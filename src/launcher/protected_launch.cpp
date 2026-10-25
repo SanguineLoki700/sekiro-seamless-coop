@@ -300,7 +300,9 @@ std::string counters(const SharedStatus& s) {
         <<",\"callback_total_us\":"<<load(s.actor_callback_total_us)<<",\"callback_max_us\":"<<load(s.actor_callback_max_us)
         <<",\"factory_us\":"<<load(s.actor_factory_us)<<",\"max_frame_interval_us\":"<<load(s.actor_max_frame_interval_us)
         <<",\"locomotion_writes\":"<<load(s.actor_locomotion_writes)<<",\"zero_commands\":"<<load(s.actor_zero_commands)
-        <<",\"controller_callbacks\":"<<load(s.actor_controller_callbacks)<<",\"controller_context_errors\":"<<load(s.actor_controller_context_errors)<<"}}";
+        <<",\"controller_callbacks\":"<<load(s.actor_controller_callbacks)<<",\"controller_context_errors\":"<<load(s.actor_controller_context_errors)
+        <<",\"source_captures\":"<<load(s.actor_source_captures)<<",\"source_nonzero\":"<<load(s.actor_source_nonzero)
+        <<",\"action_finalizes\":"<<load(s.actor_action_finalizes)<<",\"invalid_deltas\":"<<load(s.actor_invalid_deltas)<<"}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
