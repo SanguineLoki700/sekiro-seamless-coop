@@ -35,12 +35,13 @@ public:
     Phase phase{Phase::waiting};
     Error error{};
     bool motion_paused{};
-    bool native_locomotion{}, stop_requested{};
+    bool native_locomotion{}, native_pad_reference{}, stop_requested{};
     std::uint64_t creation_calls{}, ticks{}, pose_writes{};
+    std::uint64_t observed_displacement_mm{};
 private:
     Frame original_{};
     Token actor_{};
-    Vector offset_{}, placement_{};
+    Vector offset_{}, placement_{}, observed_origin_{};
     std::uint64_t created_tick_{}, placed_tick_{}, last_ms_{}, follow_start_{};
 };
 bool valid_position(const Vector&) noexcept;

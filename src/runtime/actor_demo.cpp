@@ -63,7 +63,8 @@ void Demo::tick(Game& game) {
     if (!game.actor_ready(actor_)) { phase = Phase::stopped; error = Error::changed_world; return; }
     if (phase == Phase::settling) {
         if (ticks - placed_tick_ < 60) return;
-        if (!valid_position(game.position(actor_))) { fail(Error::invalid_pose); return; }
+        observed_origin_=game.position(actor_);
+        if (!valid_position(observed_origin_)) { fail(Error::invalid_pose); return; }
         last_ms_ = follow_start_ = f.milliseconds;
         phase = Phase::following;
         return;
@@ -73,8 +74,18 @@ void Demo::tick(Game& game) {
         phase = Phase::stopped; return;
     }
     if(f.milliseconds-last_ms_>250) {
+        if(native_pad_reference) { last_ms_=f.milliseconds; return; }
         if(native_locomotion) { game.command_locomotion(actor_,false); last_ms_=f.milliseconds; return; }
         phase=Phase::stopped; return;
+    }
+    if(native_pad_reference) {
+        // Native PadManipulator owns input. This reference test only observes;
+        // it must not apply a pose setter or our mirrored locomotion commands.
+        const auto current=game.position(actor_);
+        if(!valid_position(current)) { fail(Error::invalid_pose); return; }
+        observed_displacement_mm=std::max(observed_displacement_mm,
+            static_cast<std::uint64_t>(std::llround(distance(current,observed_origin_)*1000.)));
+        last_ms_=f.milliseconds; return;
     }
     if (native_locomotion) {
         last_ms_=f.milliseconds;

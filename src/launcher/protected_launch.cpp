@@ -187,7 +187,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{};};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{};};
 Options options_from(const fs::path& config) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -202,6 +202,7 @@ Options options_from(const fs::path& config) {
     result.output=normalized(settings.receipt_directory);result.account=settings.account;
     result.actor_follow_test=settings.actor_follow_test;
     result.actor_locomotion_test=settings.actor_locomotion_test;
+    result.actor_pad_reference_test=settings.actor_pad_reference_test;
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -302,7 +303,8 @@ std::string counters(const SharedStatus& s) {
         <<",\"locomotion_writes\":"<<load(s.actor_locomotion_writes)<<",\"zero_commands\":"<<load(s.actor_zero_commands)
         <<",\"controller_callbacks\":"<<load(s.actor_controller_callbacks)<<",\"controller_context_errors\":"<<load(s.actor_controller_context_errors)
         <<",\"source_captures\":"<<load(s.actor_source_captures)<<",\"source_nonzero\":"<<load(s.actor_source_nonzero)
-        <<",\"action_finalizes\":"<<load(s.actor_action_finalizes)<<",\"invalid_deltas\":"<<load(s.actor_invalid_deltas)<<"}}";
+        <<",\"action_finalizes\":"<<load(s.actor_action_finalizes)<<",\"invalid_deltas\":"<<load(s.actor_invalid_deltas)
+        <<",\"observed_displacement_mm\":"<<load(s.actor_observed_displacement_mm)<<"}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
@@ -475,7 +477,8 @@ int run(const Options& options, bool check_only) {
         }
         shared->child_pid=child.pid;
         Payload payload{};payload.struct_size=sizeof(payload);payload.version=protocol_version;payload.host_pid=GetCurrentProcessId();payload.child_pid=child.pid;
-        payload.actor_test=options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off);
+        payload.actor_test=options.actor_pad_reference_test?ActorTest::pad_reference:
+            (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);

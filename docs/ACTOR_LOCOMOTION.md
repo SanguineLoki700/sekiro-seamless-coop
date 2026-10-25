@@ -75,7 +75,12 @@ solicitação, chama `0xb2c190` com um objeto de tempo de16 bytes na própria pi
 como o pad nativo faz: vtable em0, delta em8. Preserva o tempo de movimento
 acumulado entre quadros ativos; uma soltura o limpa. Nenhum ponteiro de pilha é
 retido. O getter de rotação `0x9eec10` permite calcular o menor giro até o alvo,
-com ajuste ao atravessar ±pi. **Esta revisão6 ainda precisa de teste no jogo.**
+com ajuste ao atravessar ±pi. No teste da revisão6, o participante confirmou
+giro, mas não caminhada. O recibo registrou636 capturas do original,25 com
+movimento,3067 aplicações de entrada e3942 finalizações, com zero deltas
+inválidos e zero recusas de contexto. O processo terminou com código0 e
+originais/gráficos inalterados. Isso confirma a execução da chamada;
+**não aceita caminhada**.
 
 Antes de escrever, confere o mundo, registros, tipos dos dois atores,
 controladores distintos e seus ponteiros de dono. Todos os campos de destino
@@ -99,3 +104,30 @@ na fase de locomoção, pausa, retomada, soltura da entrada na parada/expiraçã
 recusa de configurações malformadas, passagem de float em XMM1 e giro ao cruzar
 ±pi. Somente um teste real pode confirmar
 caminhada, giro e retorno à postura parada. O total da v1 continua10%.
+
+## Referência com o controlador completo
+
+O modo separado `actor_test=pad-reference`, desligado por padrão, serve para
+comparar o resultado com o caminho nativo completo. Passa valor1 ao seletor
+de manipulador da fábrica, que aloca0x450 bytes e chama o construtor do
+`PadManipulator`, em vez dos0x340 bytes do controlador base. O construtor
+também cria seus próprios objetos auxiliares. A análise selecionada foi retida
+em REA `ev_40b77b1802fb1c3a8e0baa197b01e4f0295f4428df8d3f057584a208c8d00022`.
+
+Não troca a vtable de um objeto base nem reutiliza seu tamanho menor. O retorno,
+registro adicional, RTTI, controlador e vínculo de dono são conferidos, com
+os links do jogador original preservados. Depois do posicionamento inicial,
+o runtime somente observa o deslocamento; não aplica acompanhamento por posição,
+entrada espelhada, solicitação de movimento ou finalização de ações. O próprio
+motor executa o controlador do pad. O payload privado dessa referência é7.
+
+**É uma referência local, ainda não validada no jogo, que lê o mesmo teclado.**
+O controlador nativo pode continuar lendo entrada até o jogo fechar. F9 não
+pausa esse controlador; F10 e o limite de dois minutos encerram somente a nossa
+observação. O teste deve ser curto, em lugar seguro, seguido de saída pelo menu.
+O contador de deslocamento observado não usa setters de posição na fase de
+caminhada. Confirmar animação exige a observação do participante.
+
+Esta comparação testa a hipótese de uma limitação do controlador básico;
+o tipo do controlador ainda não foi estabelecido como causa da falha anterior.
+Não representa controle remoto nem muda o percentual verificado.

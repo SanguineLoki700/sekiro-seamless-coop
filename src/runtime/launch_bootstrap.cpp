@@ -110,7 +110,7 @@ bool valid_initial_status() noexcept {
         &shared->actor_locomotion_writes, &shared->actor_zero_commands,
         &shared->actor_controller_callbacks, &shared->actor_controller_context_errors,
         &shared->actor_source_captures, &shared->actor_source_nonzero,
-        &shared->actor_action_finalizes, &shared->actor_invalid_deltas};
+        &shared->actor_action_finalizes, &shared->actor_invalid_deltas, &shared->actor_observed_displacement_mm};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;
@@ -136,7 +136,7 @@ bool initialize(const void* payload, DWORD bytes) {
         !config.ready_event || config.ready_event == INVALID_HANDLE_VALUE ||
         config.mapping_handle == config.ready_event) return false;
     if (config.actor_padding || (config.actor_test != ActorTest::off && config.actor_test != ActorTest::follow &&
-        config.actor_test != ActorTest::locomotion)) return false;
+        config.actor_test != ActorTest::locomotion && config.actor_test != ActorTest::pad_reference)) return false;
     if (std::all_of(std::begin(config.nonce), std::end(config.nonce), [](std::uint8_t c) { return c == 0; }))
         return false;
     for (const auto value : config.reserved) if (value != 0) return false;
@@ -202,7 +202,7 @@ bool initialize(const void* payload, DWORD bytes) {
         else { delete controller; controller = nullptr; active = false; }
         return false;
     }
-    if (config.actor_test != ActorTest::off && !skcoop::actors::start_native_demo(shared,config.actor_test==ActorTest::locomotion)) {
+    if (config.actor_test != ActorTest::off && !skcoop::actors::start_native_demo(shared,config.actor_test)) {
         // Save protection remains valid if the optional actor worker cannot start.
         InterlockedExchange(&shared->actor_error,1);
         InterlockedExchange(&shared->actor_phase,6);

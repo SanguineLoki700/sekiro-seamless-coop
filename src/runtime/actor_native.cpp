@@ -46,6 +46,7 @@ ControllerUpdate original_controller_update{};
 ControllerUpdate original_source_update{};
 constexpr std::uintptr_t creator_vtable = 0x2a952a8;
 constexpr std::uintptr_t consumer = 0xc0f7a0;
+std::uintptr_t guest_controller_table() noexcept { return demo.native_pad_reference?0x29d4b30:0x29d2ae0; }
 
 bool readable(std::uintptr_t p, std::size_t n, bool executable=false) noexcept {
     if (!p || !n || p+n < p) return false;
@@ -121,7 +122,9 @@ public:
             std::uint8_t padding[12];
         };
         static_assert(sizeof(Parameters)==48 && offsetof(Parameters,data)==24);
-        const Parameters params{frame.field_handle&0x7ff,0,source,0,data,0,{}};
+        // Kind1 uses the game's full 0x450-byte allocation and Pad constructor.
+        // Never replace a base object's vtable with the larger derived class.
+        const Parameters params{frame.field_handle&0x7ff,demo.native_pad_reference?1u:0u,source,0,data,0,{}};
         using Create=void* (*)(void*,std::uint32_t,const void*);
         regions.clear(); // The factory can allocate/remap native objects.
         const auto start=clock_ticks(); ++creation_calls;
@@ -131,12 +134,13 @@ public:
         regions.clear();
         const auto guest=pointer(frame.registry+0x38);
         if (!guest || guest!=result || !typed(guest,0x2a2b338) ||
-            !typed(pointer(guest+0x58),0x29d2ae0) || pointer(world+0x88)!=p || pointer(frame.registry)!=p)
+            !typed(pointer(guest+0x58),guest_controller_table()) || pointer(pointer(guest+0x58)+0x300)!=guest ||
+            pointer(world+0x88)!=p || pointer(frame.registry)!=p)
             throw std::runtime_error("Factory result/registry mismatch");
         return guest;
     }
     bool actor_ready(Token p) override {
-        if (!typed(p,0x2a2b338) || !typed(pointer(p+0x58),0x29d2ae0)) throw std::runtime_error("Guest type changed");
+        if (!typed(p,0x2a2b338) || !typed(pointer(p+0x58),guest_controller_table())) throw std::runtime_error("Guest type changed");
         return model(p);
     }
     Vector position(Token p) override { return native_vector(0x9f0870,p); }
@@ -247,6 +251,7 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_source_nonzero,static_cast<LONG64>(source_nonzero));
     InterlockedExchange64(&status->actor_action_finalizes,static_cast<LONG64>(action_finalizes));
     InterlockedExchange64(&status->actor_invalid_deltas,static_cast<LONG64>(invalid_deltas));
+    InterlockedExchange64(&status->actor_observed_displacement_mm,static_cast<LONG64>(demo.observed_displacement_mm));
 }
 void step(void* creator) noexcept {
     try {
@@ -350,17 +355,25 @@ constexpr Anchor anchors[]{
     {0xb2bf40,"7e7e6d4f07320116567792377469ff2cdfaa9abe230eb61a966eda546daf7523"},
     {0xb2c190,"f068456947a65bdfe685853cf78b386c90f6d32471ff6ecbe28e096fe159f94c"},
     {0x7ef120,"2daffff079e5d1f821e4d889c46ae5086df5270825d6af4543e72822e809af22"}};
+constexpr Anchor pad_reference_anchors[]{
+    {0x7f8480,"10a9addc69ce31a7ec3ae769be728d2a41253e85cbaf354ba385daf05f379ddb"},
+    {0x7ed3a0,"dabb8600e9f55694e6c0d6a7174efa3f3618629b7da38e1db611d70331d0cd12"}};
+bool anchor_matches(const Anchor& a) noexcept {
+    if (!readable(base+a.rva,16,true)) return false;
+    std::array<unsigned char,32> digest{};
+    if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,reinterpret_cast<PUCHAR>(base+a.rva),16,
+        digest.data(),static_cast<ULONG>(digest.size()))<0) return false;
+    constexpr char hex[]="0123456789abcdef";
+    for (std::size_t i=0;i<digest.size();++i)
+        if (a.digest[i*2]!=hex[digest[i]>>4] || a.digest[i*2+1]!=hex[digest[i]&15]) return false;
+    return true;
+}
 bool anchors_match() noexcept {
     for (const auto& a:anchors) {
         if(!demo.native_locomotion && (a.rva==0x7e3de0 || a.rva==0xb2bf40 || a.rva==0xb2c190 || a.rva==0x7ef120))continue;
-        if (!readable(base+a.rva,16,true)) return false;
-        std::array<unsigned char,32> digest{};
-        if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,reinterpret_cast<PUCHAR>(base+a.rva),16,
-            digest.data(),static_cast<ULONG>(digest.size()))<0) return false;
-        constexpr char hex[]="0123456789abcdef";
-        for (std::size_t i=0;i<digest.size();++i)
-            if (a.digest[i*2]!=hex[digest[i]>>4] || a.digest[i*2+1]!=hex[digest[i]&15]) return false;
+        if(!anchor_matches(a))return false;
     }
+    if(demo.native_pad_reference)for(const auto& a:pad_reference_anchors)if(!anchor_matches(a))return false;
     return true;
 }
 DWORD WINAPI worker(void*) noexcept {
@@ -402,10 +415,11 @@ DWORD WINAPI worker(void*) noexcept {
     return 0;
 }
 } // namespace
-bool start_native_demo(launch::SharedStatus* shared,bool locomotion) noexcept {
+bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode) noexcept {
     if (status || !shared) return false;
     status=shared;
-    demo.native_locomotion=locomotion;
+    demo.native_locomotion=mode==launch::ActorTest::locomotion;
+    demo.native_pad_reference=mode==launch::ActorTest::pad_reference;
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(Phase::waiting));
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
     if (!thread) { status=nullptr; return false; }
