@@ -1,6 +1,7 @@
 // Explicit protected integration launch; this is not multiplayer gameplay.
 #include "protected_launch.h"
 #include "file_open_error.h"
+#include "absent_save.h"
 #include "receipt_budget.h"
 #include "launch_settings.h"
 #include "steam_install.h"
@@ -9,6 +10,7 @@
 #include "owned_job.h"
 #include "skcoop/launch_protocol.h"
 #include "skcoop/lan/protocol.hpp"
+#include "skcoop/lan/scenario.hpp"
 #include <Psapi.h>
 #include "skcoop/save_store.hpp"
 #include <detours.h>
@@ -135,7 +137,7 @@ std::array<std::uint8_t,32> sha256_handle(HANDLE file,std::uint64_t size) {
 }
 class File {
 public:
-    File(const fs::path& requested,DWORD sharing,std::uint64_t maximum=128u*1024u*1024u,bool hash=true)
+    File(const fs::path& requested,DWORD sharing,std::uint64_t maximum=128u*1024u*1024u,bool hash=true,bool allow_empty=false)
         :path(normalized(requested)),parent(path.parent_path()),handle(CreateFileW(path.c_str(),GENERIC_READ,sharing,nullptr,
             OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr)) {
         if(!handle.valid())throw FileOpenError(path,GetLastError());
@@ -144,7 +146,7 @@ public:
             !(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT)),"File is a directory/reparse point/hardlink or unavailable");
         require(equal(final_path(handle.get()),path.wstring()),"File alias rejected");
         size=(static_cast<std::uint64_t>(info.nFileSizeHigh)<<32)|info.nFileSizeLow;
-        require(size>0&&size<=maximum,"Selected file size outside bound");
+        require((allow_empty||size>0)&&size<=maximum,"Selected file size outside bound");
         if(hash)digest=sha256_handle(handle.get(),size);
     }
     void read(std::uint64_t offset,void* destination,DWORD bytes) const {
@@ -158,6 +160,23 @@ public:
         return static_cast<std::uint64_t>(current.QuadPart)==size&&sha256_handle(handle.get(),size)==digest;
     }
     fs::path path;Directory parent;Handle handle;std::uint64_t size{};std::array<std::uint8_t,32> digest{};
+};
+class OriginalFile {
+    fs::path path;
+    std::unique_ptr<AbsentSave> absent;
+public:
+    std::unique_ptr<File> file;
+    std::array<std::uint8_t,32> digest{};
+    OriginalFile(const fs::path& selected,bool allow_missing):path(normalized(selected)) {
+        const auto attrs=GetFileAttributesW(path.c_str());const auto error=GetLastError();
+        if(allow_missing&&attrs==INVALID_FILE_ATTRIBUTES&&error==ERROR_FILE_NOT_FOUND)absent=std::make_unique<AbsentSave>(path);
+        else {file=std::make_unique<File>(path,0,64u*1024u*1024u,true,allow_missing);digest=file->digest;}
+    }
+    HANDLE lock_handle()const noexcept{return file?file->handle.get():absent->parent_handle();}
+    bool present()const noexcept{return static_cast<bool>(file);}
+    bool expected_state()const noexcept{return file||absent->still_absent();}
+    bool unchanged()const{return file?file->unchanged():absent->still_absent();}
+    std::string json_digest()const{return file?std::string("\"")+hex(sha256_handle(file->handle.get(),file->size))+"\"":"null";}
 };
 void validate_runtime_pe(const File& file) {
     IMAGE_DOS_HEADER dos{};file.read(0,&dos,sizeof(dos));
@@ -189,7 +208,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{};std::uint32_t lan_role{};std::string lan_code;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},independent_profile{};std::uint32_t lan_role{};std::string lan_code;};
 Options options_from(const fs::path& config,const fs::path& runtime_root=executable_directory()) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -206,7 +225,7 @@ Options options_from(const fs::path& config,const fs::path& runtime_root=executa
     result.actor_locomotion_test=settings.actor_locomotion_test;
     result.actor_pad_reference_test=settings.actor_pad_reference_test;
     result.actor_graph_locomotion_test=settings.actor_graph_locomotion_test;
-    result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
+    result.independent_profile=settings.independent_profile;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -352,7 +371,12 @@ void wait_foreign_close(Receipt& receipt,DWORD own_pid,bool& detected,bool& moni
         Sleep(500);
     }
 }
-int run(const Options& options, bool check_only) {
+LaunchStatus launch_snapshot(const SharedStatus& s,bool finished=false,bool completed=false) {
+    return {load(s.phase)==static_cast<LONG>(Phase::ready),finished,completed,s.child_pid,static_cast<std::uint32_t>(load(s.hooks_mask)),
+        static_cast<std::uint32_t>(load(s.actor_phase)),static_cast<std::uint32_t>(load(s.actor_error)),static_cast<std::uint32_t>(load(s.lan_state)),
+        static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0};
+}
+int run(const Options& options, bool check_only,const LaunchObserver& observer={}) {
     require(!another_game(),"Close all existing Sekiro processes before starting this isolated harness");
     File game(options.game,FILE_SHARE_READ);
     require(game.size==game_size&&hex(game.digest)==game_digest,"Independent executable digest/size mismatch");
@@ -421,9 +445,9 @@ int run(const Options& options, bool check_only) {
     }
     // No creation or repair of normal saves. Deny ALL other reads and writes for
     // the entire test, including a process launched externally through Steam.
-    File primary(source_account.path/L"S0000.sl2",0,64u*1024u*1024u);
-    File backup(source_account.path/L"S0000.sl2.bak",0,64u*1024u*1024u);
-    if(options.actor_lan_test){File seed(destination_account.path/L"S0000.co2",FILE_SHARE_READ,64u*1024u*1024u);
+    OriginalFile primary(source_account.path/L"S0000.sl2",options.independent_profile);
+    OriginalFile backup(source_account.path/L"S0000.sl2.bak",options.independent_profile);
+    if(options.actor_lan_test&&!options.independent_profile){File seed(destination_account.path/L"S0000.co2",FILE_SHARE_READ,64u*1024u*1024u);
         require(seed.digest==primary.digest,"LAN controlled fixture requires a fresh isolated copy of this original save");}
     std::unique_ptr<File> graphics;
     const auto graphics_path=roaming.path/L"Sekiro"/L"GraphicsConfig.xml";
@@ -447,8 +471,8 @@ int run(const Options& options, bool check_only) {
     require(BCryptGenRandom(nullptr,nonce.data(),static_cast<ULONG>(nonce.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0,"Cannot generate handshake nonce");
     Receipt receipt(output,nonce);
     receipt.emit("{\"event\":\"prepared\",\"protocol\":"+std::to_string(protocol_version)+",\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
-        ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+quote(hex(primary.digest))+",\"solo_backup_before\":"+quote(hex(backup.digest))+
-        ",\"solo_handles_share_mode\":0,\"original_saves_created\":false}");
+        ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+primary.json_digest()+",\"solo_backup_before\":"+backup.json_digest()+",\"solo_primary_present\":"+(primary.present()?"true":"false")+",\"solo_backup_present\":"+(backup.present()?"true":"false")+
+        ",\"solo_handles_share_mode\":"+std::string(primary.present()&&backup.present()?"0":"null")+",\"missing_originals_monitored\":"+(!primary.present()||!backup.present()?"true":"false")+",\"original_saves_created\":false}");
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(SharedStatus),nullptr));
     Handle ready(CreateEventW(nullptr,TRUE,FALSE,nullptr));
     require(mapping.valid()&&ready.valid(),"Cannot prepare unnamed launch handshake objects");
@@ -479,7 +503,7 @@ int run(const Options& options, bool check_only) {
         // Keep the original-file locks alive inside the child as well. If the
         // launcher is forcibly killed, job teardown and ordinary handle cleanup
         // cannot expose these files to an application thread still running.
-        for(const auto source:{primary.handle.get(),backup.handle.get(),graphics?graphics->handle.get():INVALID_HANDLE_VALUE}) {
+        for(const auto source:{primary.lock_handle(),backup.lock_handle(),graphics?graphics->handle.get():INVALID_HANDLE_VALUE}) {
             if(source==INVALID_HANDLE_VALUE)continue;
             HANDLE child_lock{};
             require(DuplicateHandle(GetCurrentProcess(),source,child.process,&child_lock,0,FALSE,DUPLICATE_SAME_ACCESS)!=FALSE,
@@ -491,8 +515,8 @@ int run(const Options& options, bool check_only) {
             (options.actor_pad_reference_test?ActorTest::pad_reference:
             (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off)));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
-        if(options.actor_lan_test){payload.lan_role=options.lan_role;std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
-            std::copy(primary.digest.begin(),primary.digest.end(),payload.scenario_sha256);}
+        if(options.actor_lan_test){payload.lan_role=options.lan_role;payload.lan_profile=options.independent_profile?1u:0u;std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
+            const auto& scenario=options.independent_profile?lan::independent_motion_scenario:primary.digest;std::copy(scenario.begin(),scenario.end(),payload.scenario_sha256);}
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);
         require(DuplicateHandle(GetCurrentProcess(),mapping.get(),child.process,&payload.mapping_handle,0,FALSE,DUPLICATE_SAME_ACCESS)&&
@@ -508,15 +532,20 @@ int run(const Options& options, bool check_only) {
             "READY signal did not contain a matching successful bootstrap receipt");
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
-        ULONGLONG actor_report_at{};
+        if(observer)observer(launch_snapshot(*shared));
+        ULONGLONG actor_report_at{};std::array<LONG,7> previous_signal{};
         bool actor_samples_full{};
         for(;;) {
+            require(primary.expected_state()&&backup.expected_state(),"An originally absent personal save appeared outside the isolated profile; the test was stopped without deleting it");
             wait_foreign_close(receipt,child.pid,foreign_detected,monitor_error);
             if(foreign_detected)throw std::runtime_error("A foreign/Steam-relaunched Sekiro was observed; lifecycle is unverified");
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
-            if(options.actor_follow_test && !actor_samples_full && GetTickCount64()-actor_report_at>=1000) {
+            if(observer)observer(launch_snapshot(*shared));
+            const std::array<LONG,7> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error)};
+            if(options.actor_follow_test && !actor_samples_full && (GetTickCount64()-actor_report_at>=(options.independent_profile?30000u:1000u)||signal!=previous_signal)) {
+                previous_signal=signal;
                 actor_report_at=GetTickCount64();
                 actor_samples_full=!receipt.sample("{\"event\":\"actor_status\",\"elapsed_ms\":"+std::to_string(GetTickCount64()-(deadline-maximum_run_ms))+
                     ",\"child_pid\":"+std::to_string(child.pid)+",\"process\":"+process_metrics(child.process)+",\"native\":"+counters(*shared)+"}");
@@ -536,8 +565,9 @@ int run(const Options& options, bool check_only) {
     receipt.emit("{\"event\":\"final\",\"host_run_completed\":"+std::string(completed?"true":"false")+",\"gameplay_or_save_lifecycle_accepted\":false,\"ready_observed\":"+
         (ready_observed?"true":"false")+",\"child_exit_code\":"+std::to_string(exit_code)+",\"timed_out\":"+(timed_out?"true":"false")+
         ",\"foreign_game_observed\":"+(foreign_detected?"true":"false")+",\"foreign_monitor_error\":"+(monitor_error?"true":"false")+",\"solo_primary_unchanged\":"+(primary_unchanged?"true":"false")+
-        ",\"solo_backup_unchanged\":"+(backup_unchanged?"true":"false")+",\"graphics_unchanged\":"+(graphics_unchanged?"true":"false")+",\"solo_primary_after\":"+quote(hex(sha256_handle(primary.handle.get(),primary.size)))+
-        ",\"solo_backup_after\":"+quote(hex(sha256_handle(backup.handle.get(),backup.size)))+",\"native\":"+counters(*shared)+",\"failure\":"+quote(failure)+"}");
+        ",\"solo_backup_unchanged\":"+(backup_unchanged?"true":"false")+",\"graphics_unchanged\":"+(graphics_unchanged?"true":"false")+",\"solo_primary_after\":"+primary.json_digest()+
+        ",\"solo_backup_after\":"+backup.json_digest()+",\"native\":"+counters(*shared)+",\"failure\":"+quote(failure)+"}");
+    if(observer)observer(launch_snapshot(*shared,true,completed));
     final_protection.active=false;
     return completed?0:40;
 }
@@ -583,11 +613,11 @@ void copy_asset_tree(const fs::path& from,const fs::path& to,unsigned depth=0){
 std::string utf8(std::wstring_view text){const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);require(n>0,"Cannot encode setup path");std::string result(n,0);require(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),result.data(),n,nullptr,nullptr)==n,"Cannot encode setup path");return result;}
 
 } // namespace
-std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::string_view code){
+static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,std::string_view code,bool independent){
     require((role==1||role==2)&&lan::parse_ticket(code).has_value(),"Invalid LAN role or room code");
     require(!another_game(),"Close Sekiro before preparing the protected LAN profile");
     Directory internal(normalized(fs::absolute(requested)));
-    require(internal.path.wstring().size()+24<MAX_PATH,"Extract the kit to a shorter local folder, for example C:\\SekiroCoopTeste");
+    require(internal.path.wstring().size()+(independent?52:24)<MAX_PATH,"Extract the kit to a shorter local folder, for example C:\\SekiroCoopTeste");
     File runtime(internal.path/L"skcoop_runtime.dll",FILE_SHARE_READ);validate_runtime_pe(runtime);
     File launcher(internal.path/L"skcoop_launcher.exe",FILE_SHARE_READ);
     const auto installed=inspect_steam_install();require(installed.build_id=="5794815","Sekiro is missing or this Steam build is unsupported");
@@ -596,8 +626,10 @@ std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::
     require(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam\\ActiveProcess",L"ActiveUser",RRF_RT_REG_DWORD,&type,&active,&bytes)==ERROR_SUCCESS&&active,"Open Steam and sign in before preparing the game");
     const auto account=std::to_wstring(76561197960265728ull+active);
     wchar_t roaming_buffer[MAX_PATH]{};require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming_buffer)),"Cannot find original save folder");
-    Directory roaming(roaming_buffer);separate(roaming,internal);separate(original.parent,internal);File primary(roaming.path/L"Sekiro"/account/L"S0000.sl2",0,64u*1024u*1024u);
-    File backup(roaming.path/L"Sekiro"/account/L"S0000.sl2.bak",0,64u*1024u*1024u);
+    Directory roaming(roaming_buffer);separate(roaming,internal);separate(original.parent,internal);
+    if(independent){ensure_setup_directory(roaming.path/L"Sekiro");ensure_setup_directory(roaming.path/L"Sekiro"/account);}
+    OriginalFile primary(roaming.path/L"Sekiro"/account/L"S0000.sl2",independent);
+    OriginalFile backup(roaming.path/L"Sekiro"/account/L"S0000.sl2.bak",independent);
     auto game=installed.library_root/L"steamapps"/L"common"/L"Sekiro-SkCoop-Test";ensure_setup_directory(game);
     Directory test(game);separate(original.parent,test);separate(internal,test);separate(roaming,test);
     for(const auto name:{L"sekiro.exe",L"steam_api64.dll",L"bink2w64.dll",L"oo2core_6_win64.dll",L"amd_ags_x64.dll",L"fmod_event64.dll",L"fmod_event_net64.dll",L"fmodex64.dll",L"pack.dat"})copy_new_or_compare(original.path.parent_path()/name,game/name,true);
@@ -606,25 +638,56 @@ std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::
     const auto appid=game/L"steam_appid.txt";
     if(GetFileAttributesW(appid.c_str())==INVALID_FILE_ATTRIBUTES){require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect test AppID file");new_bytes(appid,"814380\n");}
     // A fresh profile per setup preserves every previous trial and save.
-    const auto id=hex(lan::random_id()).substr(0,12);const auto profile=internal.path/ascii_wide("profile-"+id);
+    const auto id=hex(lan::random_id()).substr(0,12);
+    if(independent){ensure_setup_directory(internal.path/L"profiles");ensure_setup_directory(internal.path/L"profiles"/account);}
+    const auto profile=independent?internal.path/L"profiles"/account/L"movement-v2":internal.path/ascii_wide("profile-"+id);
     ensure_setup_directory(profile);ensure_setup_directory(profile/L"Sekiro");ensure_setup_directory(profile/L"Sekiro"/account);
     // Copy from handles already denying all access, rather than reopening the
     // original save while its protective pin is held.
     const auto clone=[&](const File& source,const fs::path& destination){std::string value(static_cast<std::size_t>(source.size),0);source.read(0,value.data(),static_cast<DWORD>(value.size()));new_bytes(destination,value);};
-    clone(primary,profile/L"Sekiro"/account/L"S0000.co2");clone(backup,profile/L"Sekiro"/account/L"S0000.co2.bak");
+    if(!independent){clone(*primary.file,profile/L"Sekiro"/account/L"S0000.co2");clone(*backup.file,profile/L"Sekiro"/account/L"S0000.co2.bak");}
+    else{
+        const auto owner=profile/L"profile.owner";const auto expected=utf8(account)+"\n";
+        if(GetFileAttributesW(owner.c_str())==INVALID_FILE_ATTRIBUTES){require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect profile owner");
+            for(const auto name:{L"S0000.co2",L"S0000.co2.bak"})require(GetFileAttributesW((profile/L"Sekiro"/account/name).c_str())==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND,"Existing unowned profile was not imported");
+            new_bytes(owner,expected);
+        }else{File checked(owner,FILE_SHARE_READ,128);std::string actual(static_cast<std::size_t>(checked.size),0);checked.read(0,actual.data(),static_cast<DWORD>(actual.size()));require(actual==expected,"This test profile belongs to another Steam account");}
+    }
     const auto graphics=roaming.path/L"Sekiro"/L"GraphicsConfig.xml";
-    if(GetFileAttributesW(graphics.c_str())!=INVALID_FILE_ATTRIBUTES)copy_new_or_compare(graphics,profile/L"Sekiro"/L"GraphicsConfig.xml",false);
+    if(GetFileAttributesW(graphics.c_str())!=INVALID_FILE_ATTRIBUTES){
+        const auto private_graphics=profile/L"Sekiro"/L"GraphicsConfig.xml";
+        if(independent&&GetFileAttributesW(private_graphics.c_str())!=INVALID_FILE_ATTRIBUTES){File checked(private_graphics,FILE_SHARE_READ,1024u*1024u);}
+        else copy_new_or_compare(graphics,private_graphics,false);
+    }
     else require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect graphics configuration");
     ensure_setup_directory(internal.path/L"config");ensure_setup_directory(internal.path/L"receipts");
     const auto config=internal.path/L"config"/ascii_wide("lan-"+id+".ini");
-    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\nactor_test=lan\nlan_role="+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n";
+    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\nactor_test=lan\nlan_role="+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(independent?"lan_profile=independent\n":"");
     (void)parse_launch_settings(settings);new_bytes(config,settings);
     require(primary.unchanged()&&backup.unchanged(),"Original saves changed during preparation");
     // Pinned original handles close on return. Launch revalidates every file,
     // profile, lease and seed before a suspended game can execute.
-    return quote_argument(launcher.path.wstring())+L" --steam-start "+quote_argument(config.wstring())+L" %command%";
+    return config;
+}
+std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::string_view code){
+    const auto config=prepare_lan_impl(requested,role,code,false);
+    return quote_argument((fs::absolute(requested)/L"skcoop_launcher.exe").wstring())+L" --steam-start "+quote_argument(config.wstring())+L" %command%";
+}
+fs::path prepare_direct_lan(const fs::path& requested,std::uint32_t role,std::string_view code){
+    return prepare_lan_impl(requested,role,code,true);
 }
 int check_protected_launch(const fs::path& config) {return run(options_from(config),true);}
+int direct_protected_launch(const fs::path& config,const fs::path& runtime_directory,const LaunchObserver& observer) {
+    SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
+    const auto options=options_from(config,runtime_directory.empty()?executable_directory():runtime_directory);
+    DWORD active{},bytes=sizeof(active);
+    require(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam\\ActiveProcess",L"ActiveUser",RRF_RT_REG_DWORD,nullptr,&active,&bytes)==ERROR_SUCCESS&&active,
+        "Abra a Steam e entre na conta que vai jogar.");
+    require(options.account==std::to_wstring(76561197960265728ull+active),"A conta da Steam mudou. Prepare o perfil desta conta no assistente.");
+    // The original game and Steam DLLs remain unmodified. Steam still validates
+    // the app's real license; a Steam failure is a failed launch, never bypassed.
+    return run(options,false,observer);
+}
 int steam_protected_launch(const fs::path& config,std::wstring_view original_command) {
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
     wchar_t appid[16]{};

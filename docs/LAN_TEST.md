@@ -1,50 +1,37 @@
-# Protótipo de movimentação por LAN
+# Assistente LAN de abertura direta
 
-O teste inicial conecta dois participantes Windows na mesma rede, com uma instância normal da Steam em cada máquina. Cada jogo fornece posição, giro e variáveis de caminhada do seu jogador; a DLL aplica os dados recebidos ao personagem adicional. **A integração está implementada, mas ainda não foi validada com dois Sekiros reais.** O progresso funcional permanece em 10%.
+O fluxo atual tem dois botoes: **Criar jogo neste PC** e **Entrar no PC selecionado**. O assistente encontra a sala na rede local, prepara a instalacao independente e abre o jogo com o perfil de teste da conta ativa. O participante nao copia codigos nem configura novas opcoes de inicializacao da Steam. As instrucoes estao em [LAN_KIT.txt](LAN_KIT.txt).
 
-O pacote tem um executável na raiz e a pasta `SeamlessCoop` com o lançador interno e a DLL. O executável da raiz é um assistente de conexão e preparação; abrir o jogo continua usando a entrada protegida pela Steam. A experiência final de iniciar o mod por dois cliques continua pendente. As instruções do participante estão em [LAN_KIT.txt](LAN_KIT.txt).
+A abertura direta foi observada localmente: o participante carregou o personagem e fechou pelo menu; o processo saiu com codigo0 e os hashes dos saves originais permaneceram iguais. Essa prova inicial usou o caminho direto com perfil importado. Depois, o participante criou Novo Jogo pelo botao do assistente e confirmou controle e saida normal; o jogo produziu o `.co2` e backup, com hashes originais preservados. Nenhuma dessas observacoes equivale a dois jogadores reais conectados.
 
-## Separar conexão e jogo
+## Perfil por conta
 
-O verificador funciona sem Sekiro, sem Steam e sem ferramentas de desenvolvimento. Um computador cria uma sala e mostra o código, o outro entra com esse código. Só apresenta conexão verificada depois de observar tráfego nos dois sentidos. Cada computador pode salvar um relatório sem o código da sala. Essa prova verifica sockets e mensagens; não verifica personagens no jogo.
+O modo `lan_profile=independent` prepara um perfil persistente em `SeamlessCoop/profiles/<conta>/movement-v2`. O jogo cria o proprio `.co2` na conta atual a partir de **Novo Jogo**; depois o participante usa **Continuar**. O assistente nao importa o save pessoal, nao converte o Steam ID de outro save, nao altera validadores de propriedade do jogo e nao apaga os perfis antigos. Um marcador vincula a pasta preparada a conta esperada.
 
-O verificador e o jogo declaram finalidades distintas na negociação. Um verificador não é admitido na sessão de personagens. Não existe retorno automático ao modo de imitação local quando falta o outro participante.
+A Steam continua fornecendo a conta ativa e o jogo original continua responsavel pela autenticacao. O lancador recusa uma configuracao de outra conta. A [documentacao oficial](https://partner.steamgames.com/doc/api/steam_api) distingue a inicializacao no cliente e o AppID legitimo. O projeto usa apenas o AppID814380 e DLLs originais, sem substituicoes ou alteracoes de DRM.
 
-O assistente de preparação encontra a instalação Steam, verifica o executável suportado, prepara uma cópia independente do jogo na mesma biblioteca e clona o progresso original para um perfil novo `.co2`. Arquivos existentes não são sobrescritos. Ele recusa links e aliases nos caminhos usados. A cópia ocupa aproximadamente 25 GB extras; arquivos grandes já existentes conservam a verificação por comprimento do lançador, sem alegar verificação criptográfica completa dos depots. O lançamento revalida arquivos, isolamento e identidade antes de executar o jogo suspenso com a DLL.
+O bootstrap privado passa a **10**. O envelope LAN permanece `SKL1/v1`; o novo modo usa adaptador de movimento **2**. Seu hash de cenario representa uma declaracao de teste controlado na mesma area, nao o conteudo do save e nao um ID nativo de mapa. Assim, contas diferentes nao precisam de saves byte a byte iguais. O modo antigo de fixture identica permanece separado pelo adaptador e sua negociacao; um par incompativel e recusado. O codec de campanha v2 nao mudou.
 
-Cada preparação conserva perfis anteriores e fornece uma linha nova para copiar nas opções da Steam. A primeira configuração LAN exige que o `.co2` preparado ainda seja uma cópia do `.sl2` original. Depois de uma tentativa que grava progresso, preparar novamente em ambas as máquinas. O pacote limpo não contém saves, conta, código de sala nem configurações pessoais. Depois da preparação, a pasta usada passa a conter esses dados e não deve ser redistribuída.
+## Descoberta local
 
-## Transporte e identidade
+A busca usa UDP24861 com pedidos limitados, nonce de consulta, respostas unicast de tamanho fixo e expiracao de salas. Seleciona o endereco de origem da resposta, evitando copiar o endereco de um adaptador VPN. O anuncio so comeca depois que o transporte nativo do anfitriao esta ouvindo; termina quando o par conecta ou o jogo sai. O TCP de movimento continua em24860.
 
-O transporte inicial usa TCP IPv4, fora da thread do jogo, com frames de movimento a até 20 Hz, heartbeat de 250 ms e perda de sessão após 2 segundos sem mensagens válidas. A interface fica separada para substituir o transporte posteriormente. TCP pode acumular atraso sob perda de pacotes; esta versão serve ao cenário curto de LAN e não satisfaz os critérios de rede da v1.
+A descoberta automatica serve a uma **rede privada de confianca**. A resposta carrega a credencial da sala em claro na rede local; ela nao e autenticacao de conta Steam. O transporte subsequente conserva HMAC-SHA256, sala e conexao aleatorias, participantes separados, sequencias e rejeicao de mensagens antigas. Nao ha encaminhamento de portas, mensagens externas ou regras de Firewall criadas pelo programa.
 
-O envelope `SKL1`, versão 1, tem framing limitado a 256 bytes e autenticação HMAC-SHA256. O código contém endereço, porta, sala aleatória de 128 bits e segredo aleatório de 256 bits. Uma negociação em cinco mensagens vincula cada conexão a um nonce novo e às identidades aleatórias dos dois participantes. Sequências antigas, outra sala, outra conexão, versão/finalidade/build incompatíveis e valores inválidos são rejeitados. O segredo não entra nos recibos. O tráfego não é criptografado e o código não autentica uma conta Steam.
+## Movimento e encerramento
 
-Este protocolo experimental é separado do [codec de campanha v2](PROTOCOL.md), que não mudou. Identificadores de participantes LAN também são separados de Steam IDs. O pacote preserva o AppID legítimo de Sekiro e os arquivos Steam originais.
+A DLL nao le o jogador ou o grafo nas cenas e menus antes do F8. Depois de armar, publica a pose e as variaveis de caminhada a ate20Hz; a thread do jogo usa caixas de dados sem espera e a rede trabalha em outra thread. O personagem adicional recebe interpolacao de100ms, correcoes continuas de posicao e animacao recebida do parceiro. Dados vencidos por500ms liberam a caminhada; perda de mensagens por2s interrompe a sessao.
 
-Usar a mesma conta não comprova que duas instâncias de Sekiro serão autorizadas simultaneamente. O verificador não depende disso. A tentativa com os dois jogos deve observar o comportamento real da Steam; não há alteração de autenticação nem promessa de simultaneidade. Veja as informações oficiais sobre [uso de uma conta em mais de um computador](https://help.steampowered.com/ms/faqs/view/71EA-CDCE-FB5C-82B3) e [modo offline](https://help.steampowered.com/en/faqs/view/0E18-319B-E34B-B2C8).
+Os jogadores devem estar na mesma area segura, separados por pelo menos1metro e a ate25metros um do outro. O descritor0xa000 continua sendo apenas um descritor de criacao. Mudancas observadas de mundo/jogador/registro ou geracao encerram a tentativa. F9 pausa e F10 interrompe; uma criacao por processo, sem recriacao automatica, com limite ativo de2minutos.
 
-## Adaptador nativo e limites do primeiro cenário
+A janela mostra o estado real do transporte e contagens recebidas/enviadas, sem afirmar sucesso quando falta o outro cliente. Recusa fechar o lancador durante a partida para evitar que seu job encerre o filho de surpresa; fechar primeiro pelo menu do jogo. Registros detalhados passam a ser amostrados por transicao e a cada30s, conservando a reserva do recibo final.
 
-O bootstrap privado passa à versão 9 para levar papel, código e identidade do cenário. A sessão nativa compara o SHA-256 do jogo, a versão do adaptador e o hash do save original de partida. Isso identifica um cenário controlado com o mesmo save inicial, **não uma sincronização de campanha nem um identificador nativo de mapa**. O campo observado `0xa000` continua sendo apenas um descritor de criação.
+O jogo e executado somente na copia independente verificada, com os arquivos originais protegidos e recibos antes/depois. Originais existentes ficam bloqueados; quando nao existem, o preparador cria apenas os diretorios de namespace, fixa os pais e observa a ausencia dos arquivos sem criar placeholders. Um aparecimento externo observado interrompe o teste e nao e revertido. O limite externo do host continua30minutos. Os arquivos grandes existentes mantem a verificacao por comprimento; isso nao e verificacao criptografica dos depots. Nenhum binario e instalado na pasta original.
 
-Os acessos ao jogo continuam limitados ao executável 1.06/build5794815 já estudado. Reutilizam a fábrica, os getters/setter de pose e as variáveis de animação previamente observados. A thread do jogo usa apenas caixas de dados com tentativa de acesso sem espera; sockets, enquadramento e HMAC ficam na thread de rede.
+## Estado da verificacao
 
-F8 arma uma única criação após existir um frame remoto válido. Os jogadores devem estar separados por pelo menos 1 metro e dentro de 25 metros um do outro, na mesma área inicial, em local seguro. A implementação não teleporta o jogador original nem altera flags de colisão sem evidência. Aplica interpolação de 100 ms, correções de posição do personagem adicional e os valores de caminhada recebidos. **Essas correções são contínuas neste teste LAN**; a prova anterior de animação local usava apenas o posicionamento inicial. São caminhos e resultados diferentes.
+Os testes independentes cobrem codec/sessao, dois verificadores em processos separados, descoberta UDP, endereco de origem, recusa de resposta sem nonce correspondente, conexao HMAC real e expiracao sem anfitriao. A preparacao real reutilizou o mesmo perfil duas vezes sem copiar save pessoal. Relatorio e limites em [simple-launcher-2026-10-25.md](validation/simple-launcher-2026-10-25.md).
 
-Dados sem atualização por mais de 500 ms liberam a caminhada. Perda de conexão interrompe o controle remoto. Mudanças observadas de mundo/jogador/registro, de geração ou descritor remoto encerram a tentativa; não há recriação automática entre carregamentos. F9 pausa a representação remota e F10 encerra. O cenário ativo dura até dois minutos, com o limite externo do lançador preservado. Não descansar, viajar ou trocar de área neste primeiro teste.
+Ataques, postura, dano, IA, chefes, inventario, viagens, campanha, reconexao e convites Steam permanecem fora deste incremento. O progresso permanece10%; os criterios de quatro maquinas continuam obrigatorios.
 
-Ataques, dano, postura, IA, chefes, inventário, eventos de campanha, reconexão e convites Steam continuam fora deste incremento. Não há aceitação de dois ou quatro jogos reais. Veja [os resultados disponíveis](validation/lan-foundation-2026-10-25.md).
-
-## Reproduzir
-
-```powershell
-cmake --preset windows-msvc
-cmake --build --preset windows-release --parallel 4
-ctest --preset windows-release --no-tests=error
-python -m unittest discover -s tests -p test_progress.py
-python tools/progress.py --check
-python tools/package_lan_test.py --out local/skcoop-lan-test.zip
-```
-
-O empacotador usa uma lista explícita de binários, instruções e licenças, com hashes no manifesto. Nunca empacotar recursivamente a pasta de um teste usado.
+Para montar um ZIP limpo depois da compilacao, usar `python tools/package_lan_test.py --out local/skcoop-lan-simple-windows-x64.zip`. O empacotador usa uma lista explicita e nunca inclui perfis, saves, chaves, arquivos do jogo ou registros.

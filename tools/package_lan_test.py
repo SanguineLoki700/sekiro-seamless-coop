@@ -22,7 +22,10 @@ def package(binary_dir: Path, output: Path) -> None:
     manifest = {
         "kind": "owner-lan-movement-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 9,
+        "launch_protocol": 10,
+        "native_motion_adapter": 2,
+        "automatic_lan_discovery": True,
+        "save_mode": "independent-per-steam-account",
         "lan_protocol": 1,
         "game": "Sekiro Steam build 5794815 / 1.06",
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),

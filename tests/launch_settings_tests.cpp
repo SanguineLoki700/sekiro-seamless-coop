@@ -202,6 +202,9 @@ int main() {
     const std::string code="SKL1|192.168.1.2|24860|11111111111111111111111111111111|2222222222222222222222222222222222222222222222222222222222222222";
     const auto lan=parse_launch_settings(ini()+"actor_test=lan\nlan_role=guest\nlan_code="+code+"\n");
     require(lan.actor_lan_test&&lan.lan_role==2&&lan.lan_code==code&&lan.actor_follow_test,"LAN configuration missing.");
+    require(parse_launch_settings(ini()+"actor_test=lan\nlan_role=host\nlan_code="+code+"\nlan_profile=independent\n").independent_profile,"Independent profile missing.");
+    invalid([&]{(void)parse_launch_settings(ini()+"lan_profile=independent\n");});
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\nlan_role=host\nlan_code="+code+"\nlan_profile=foreign\n");});
     invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\n");});
     invalid([&]{(void)parse_launch_settings(ini()+"lan_role=guest\nlan_code="+code+"\n");});
     invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\nlan_role=other\nlan_code="+code+"\n");});

@@ -138,10 +138,10 @@ int wmain(int argc, wchar_t** argv) {
             aborted.status.checkpoint_mask == 0 && aborted.status.denied_opens == 0,
             "Intermediate attach failure did not abort before startup");
         ++passed;
-        for (const bool seeded : {false, true}) {
+        for (const unsigned variant : {0u, 1u, 2u}) {
+            const bool seeded=variant==1, originals_present=variant!=2;
             Tree native;
-            create_sentinel(native.solo() / L"S0000.sl2", seed);
-            create_sentinel(native.solo() / L"S0000.sl2.bak", seed);
+            if(originals_present){create_sentinel(native.solo() / L"S0000.sl2", seed);create_sentinel(native.solo() / L"S0000.sl2.bak", seed);}
             if (seeded) create_sentinel(native.coop() / L"S0000.co2", seed);
             skcoop_bootstrap_run_result result{};
             result.struct_size = sizeof(result);
@@ -171,8 +171,9 @@ int wmain(int argc, wchar_t** argv) {
             require(bytes(native.coop() / L"S0000.co2") == cooperative &&
                 bytes(native.coop() / L"S0000.co2.bak") == cooperative,
                 "Native partial writes/copy/recovery changed untouched bytes or size");
-            require(bytes(native.solo() / L"S0000.sl2") == expected &&
+            if(originals_present)require(bytes(native.solo() / L"S0000.sl2") == expected &&
                 bytes(native.solo() / L"S0000.sl2.bak") == expected, "Native profile changed solo sentinels");
+            else require(!std::filesystem::exists(native.solo()/L"S0000.sl2")&&!std::filesystem::exists(native.solo()/L"S0000.sl2.bak"),"Native profile created absent originals");
             ++passed;
         }
         for (const bool hard_link : {false, true}) {

@@ -1,60 +1,39 @@
-SEKIRO CO-OP - PROTOTIPO DE TESTE LAN
+SEKIRO CO-OP - ASSISTENTE DE TESTE LAN
 
-Este pacote testa a conexao e prepara o teste de movimentacao de 2 jogadores.
-Ataques, dano, inimigos, campanha, viagens e convites Steam ainda nao sincronizam.
+Atualize o pacote completo nos DOIS computadores. Extraia o ZIP fora da pasta
+do jogo, por exemplo C:\SekiroCoopTeste. Mantenha o executavel e SeamlessCoop juntos.
+A atualizacao nao inclui nem substitui perfis ou saves criados anteriormente.
 
-1. Extraia o ZIP inteiro para uma pasta curta, por exemplo C:\SekiroCoopTeste.
-   Nao copie nada para a instalacao normal do jogo.
-2. Abra SekiroCoopTeste.exe nos dois computadores da mesma rede.
-3. No PC, escolha o IPv4 da sua rede e clique em Criar no PC. Copie o codigo.
-4. No notebook, cole o codigo inteiro e clique em Entrar no notebook.
-5. Aguarde a mensagem Conexao verificada nos dois sentidos. Salve o resultado
-   nos dois computadores. Se o Firewall perguntar, permita na rede privada.
-   Este teste funciona sem Sekiro e sem Steam; ele so comprova a rede.
+1. Deixe a Steam aberta, cada computador na sua propria conta com Sekiro.
+2. Abra SekiroCoopTeste.exe nos dois computadores.
+3. No PC, clique em Criar jogo neste PC. O assistente prepara e abre o jogo.
+4. No notebook, aguarde o PC aparecer na lista, selecione e clique em Entrar.
+   O jogo sera aberto diretamente. Nao ha codigo para copiar nem linha da Steam.
+5. Na PRIMEIRA vez escolha Novo Jogo nos dois; pode pular as cenas. Este perfil
+   de teste e novo e separado por conta. Seu save pessoal nao e importado.
+   Nas proximas vezes use Continuar: o progresso deste teste fica preservado.
+6. Quando puder controlar os dois personagens no mesmo local seguro, ande
+   alguns passos em um dos computadores e pressione F8 nos dois jogos.
+   Cada jogo deve mostrar o movimento do outro jogador. O teste dura 2 minutos.
+7. F9 pausa a representacao remota; F10 encerra o movimento remoto.
+8. Feche o Sekiro pelo menu e depois feche o assistente.
 
-TESTE NO JOGO - SOMENTE DEPOIS DE COMBINAR O TESTE COM O DESENVOLVEDOR
+Se o Firewall perguntar, permita o programa na rede privada. A descoberta
+funciona na mesma rede local; VPNs, redes publicas e convidados isolados nao
+sao o cenario deste teste. A Steam e o jogo continuam autenticando as contas.
 
-Instale o Sekiro pela Steam no notebook, abra-o normalmente uma vez, carregue
-o mesmo save inicial do PC e feche pelo menu. Mantenha o jogo fechado nos dois.
-O primeiro prototipo exige o mesmo save de partida nos dois computadores.
-O pacote nao inclui nem transfere seus saves.
+O primeiro preparo pode copiar cerca de 25 GB para uma instalacao de teste
+independente. As proximas aberturas reutilizam essa copia e o perfil da conta.
+Os arquivos pessoais existentes continuam protegidos durante a partida.
+Nao mova saves entre contas nem substitua arquivos para forcar seu carregamento.
 
-1. No PC, selecione PC (criar sala) e clique em Preparar teste no jogo.
-   A preparacao cria um NOVO codigo de sala. Compartilhe esse novo codigo.
-2. No notebook, cole esse novo codigo, selecione Notebook (entrar) e prepare.
-   A copia completa do jogo usa cerca de 25 GB extras no mesmo disco da Steam.
-   A janela pode demorar; aguarde. Feche o Sekiro durante toda a preparacao.
-3. Use Copiar linha da Steam. Cole em Sekiro > Propriedades > Geral >
-   Opcoes de inicializacao, em cada computador. A preparacao nao altera a Steam.
-4. A Steam abre e autentica cada jogo normalmente. O pacote nao resolve as
-   restricoes de jogar simultaneamente na mesma conta. Se ela impedir a segunda
-   inicializacao, pare nesse ponto e informe o resultado.
-5. No teste combinado, abra o PC primeiro e depois o notebook. Carregue o save
-   nos dois. Fique em um lugar seguro e proximo, sem inimigos. Ande alguns passos
-   com um jogador para evitar que os dois comecem sobrepostos; depois pressione
-   F8 uma vez em cada janela. O limite inicial de distancia e 25 metros.
-6. Cada um deve ver o outro caminhar, virar e parar. F9 pausa a representacao
-   remota; F10 encerra o teste. O movimento tem um limite de 2 minutos.
-   Nao use ataques, viagens, descanso ou troca de area neste teste inicial.
-7. Feche ambos pelo menu e apague a linha de Opcoes de inicializacao da Steam.
+As antigas opcoes de inicializacao da Steam nao sao usadas por estes botoes.
+Se colocou a linha antiga, remova-a uma unica vez quando quiser voltar a usar
+Jogar da Steam para abrir o jogo normal. Nao precisa inserir uma linha nova.
 
-Os saves originais .sl2 ficam protegidos durante o teste. Cada preparacao cria
-um novo perfil .co2 dentro da pasta SeamlessCoop, preservando tentativas antigas.
-Para repetir depois de gravar progresso, prepare novamente os dois perfis e use
-as novas linhas da Steam. Nunca apague um perfil sem antes conferir o que contem.
+Este prototipo ainda nao sincroniza ataques, dano, inimigos, viagens, campanha,
+reconexao ou convites Steam. Nao use descanso/viagem/troca de area neste teste.
+O percentual funcional permanece 10%; dois jogos reais ainda precisam de prova.
 
-Nao compartilhe a pasta depois de usar a preparacao: ela passara a conter seus
-perfis, codigos e registros privados. Compartilhe somente o ZIP original.
-O codigo de sala permite participar do teste: envie apenas ao outro computador.
-
-SE A PREPARACAO PARAR
-
-A instalacao original do jogo e localizada pelo registro e manifesto da Steam;
-nao precisa mover a instalacao nem selecionar sua pasta manualmente.
-Os saves originais ficam em %APPDATA%\Sekiro, separados dos arquivos do jogo.
-A janela de erro mostra o arquivo exato e o codigo do Windows: arquivo ausente,
-acesso negado e arquivo em uso sao problemas diferentes. Informe essa mensagem
-antes de mover arquivos, criar backups manualmente ou repetir a preparacao.
-
-Ainda falta validar dois jogos reais e depois os criterios de quatro maquinas.
-Este pacote nao representa uma versao publica jogavel de seamless co-op.
+Nao redistribua a pasta depois de usa-la: ela passa a conter perfis e registros
+privados. Para o outro computador use somente o ZIP original publicado.
