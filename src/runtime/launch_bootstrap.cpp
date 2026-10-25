@@ -107,7 +107,8 @@ bool valid_initial_status() noexcept {
         &shared->actor_ticks, &shared->actor_pose_writes, &shared->actor_creation_attempts,
         &shared->actor_world_callbacks, &shared->actor_callback_total_us,
         &shared->actor_callback_max_us, &shared->actor_factory_us, &shared->actor_max_frame_interval_us,
-        &shared->actor_locomotion_writes, &shared->actor_zero_commands};
+        &shared->actor_locomotion_writes, &shared->actor_zero_commands,
+        &shared->actor_controller_callbacks, &shared->actor_controller_context_errors};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;

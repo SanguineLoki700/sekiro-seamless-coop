@@ -299,7 +299,8 @@ std::string counters(const SharedStatus& s) {
         <<",\"creation_attempts\":"<<load(s.actor_creation_attempts)<<",\"world_callbacks\":"<<load(s.actor_world_callbacks)
         <<",\"callback_total_us\":"<<load(s.actor_callback_total_us)<<",\"callback_max_us\":"<<load(s.actor_callback_max_us)
         <<",\"factory_us\":"<<load(s.actor_factory_us)<<",\"max_frame_interval_us\":"<<load(s.actor_max_frame_interval_us)
-        <<",\"locomotion_writes\":"<<load(s.actor_locomotion_writes)<<",\"zero_commands\":"<<load(s.actor_zero_commands)<<"}}";
+        <<",\"locomotion_writes\":"<<load(s.actor_locomotion_writes)<<",\"zero_commands\":"<<load(s.actor_zero_commands)
+        <<",\"controller_callbacks\":"<<load(s.actor_controller_callbacks)<<",\"controller_context_errors\":"<<load(s.actor_controller_context_errors)<<"}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {

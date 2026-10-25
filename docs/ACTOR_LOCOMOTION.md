@@ -32,6 +32,28 @@ do original e os escreve apenas no controlador próprio do ator adicional. A
 orientação acompanha os valores do original; esta etapa espelha a entrada local.
 O posicionamento repetido por setter fica desativado durante essa fase.
 
+Na primeira rodada desse modo (payload4), o participante relatou que o ator
+continuou parado e virou enquanto ele caminhava. Portanto a cópia dos vetores
+no callback do mundo não aceitou caminhada nem animação. Uma tentativa privada
+posterior foi interrompida por uma checagem de acesso antes do posicionamento e
+de qualquer chamada de solicitação de movimento; não é evidência dessa chamada.
+
+A revisão seguinte aplica a entrada no callback de atualização do controlador
+adicional (slot9 da vtable base), depois do método original. Os demais objetos
+passam pelo método original. O componente recebido precisa ser o componente do
+ator registrado; os vínculos e campos são reconferidos antes das escritas. O
+callback do mundo publica uma intenção com validade de250ms, além do orçamento
+geral. Esta revisão ainda precisa de teste no jogo.
+
+O caminho nativo do pad também solicita movimento em `0xb2bf40`: a análise da
+rotina mostrou que ela altera somente o bit0 em módulo+`0x184`. O getter base
+`0x7e3ea0`, conferido em instruções, resolve o módulo em
+ator+`0x1ff8` → módulo+`0x80`. O RTTI dos módulos de origem e destino foi observado
+como `SprjChrActionRequestModule`, em objetos distintos. A revisão combina a
+entrada com essa solicitação apenas no módulo do guest e solta a solicitação
+ao pausar/parar. Não chama os wrappers globais de animação encontrados nas
+referências externas.
+
 Antes de escrever, confere o mundo, registros, tipos dos dois atores,
 controladores distintos e seus ponteiros de dono. Todos os campos de destino
 precisam estar graváveis. Os vetores devem ser finitos, limitados e com w zero;
@@ -42,7 +64,8 @@ F9 zera movimento e delta de orientação enquanto pausa; F10 solicita parada e
 zera a entrada após reconferir os vínculos. O término do orçamento temporal
 também solta a entrada. Uma troca de mundo/registro interrompe os comandos sem
 escrever em um objeto antigo. A DLL continua fixa até a saída do processo; não
-há despawn individual implementado. O payload/status privado passa à versão4.
+há despawn individual implementado. O payload/status privado da revisão passa
+à versão5; contadores distinguem callbacks do controlador e recusas de contexto.
 
 Testes independentes cobrem limites dos vetores, ausência de setters de posição
 na fase de locomoção, pausa, retomada, soltura da entrada na parada/expiração e
