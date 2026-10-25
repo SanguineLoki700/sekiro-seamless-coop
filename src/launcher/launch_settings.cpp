@@ -113,9 +113,13 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else if (key == L"coop_profile_root") bit = 2;
         else if (key == L"account") bit = 4;
         else if (key == L"receipt_directory") bit = 8;
+        else if (key == L"actor_test") bit = 16;
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
-        if (bit == 4) {
+        if (bit == 16) {
+            if (value != L"off" && value != L"follow") invalid("actor_test must be off or follow.");
+            result.actor_follow_test = value == L"follow";
+        } else if (bit == 4) {
             if (!valid_account(value)) invalid("Account must be a positive canonical decimal uint64.");
             result.account = value;
         } else {
@@ -126,7 +130,7 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         }
         seen |= bit;
     }
-    if (!section || seen != 15) invalid("All four [LAUNCH] keys are required.");
+    if (!section || (seen & 15) != 15) invalid("All four [LAUNCH] keys are required.");
     return result;
 }
 

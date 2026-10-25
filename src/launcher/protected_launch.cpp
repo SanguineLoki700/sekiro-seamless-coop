@@ -185,7 +185,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{};};
 Options options_from(const fs::path& config) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -198,6 +198,7 @@ Options options_from(const fs::path& config) {
     result.coop_root=normalized(settings.coop_profile_root);
     require(result.coop_root.wstring().size()<MAX_PATH,"Cooperative roaming root exceeds the native AppData API bound");
     result.output=normalized(settings.receipt_directory);result.account=settings.account;
+    result.actor_follow_test=settings.actor_follow_test;
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -284,7 +285,10 @@ std::string counters(const SharedStatus& s) {
         <<",\"process_detach_count\":"<<load(s.process_detach_count)<<",\"native_aggregate\":{\"redirected\":"<<load(s.native_redirected)
         <<",\"denied\":"<<load(s.native_denied)<<",\"passthrough\":"<<load(s.native_passthrough)<<",\"internal_bypass\":"<<load(s.native_internal_bypass)
         <<",\"appdata_redirects\":"<<load(s.native_appdata_redirects)<<",\"directory_queries\":"<<load(s.native_directory_queries)
-        <<",\"copy_failures\":"<<load(s.native_copy_failures)<<",\"destination_may_be_modified\":"<<load(s.native_destination_may_be_modified)<<"}}";
+        <<",\"copy_failures\":"<<load(s.native_copy_failures)<<",\"destination_may_be_modified\":"<<load(s.native_destination_may_be_modified)<<"}"
+        <<",\"actor\":{\"phase\":"<<load(s.actor_phase)<<",\"error\":"<<load(s.actor_error)
+        <<",\"creation_calls\":"<<load(s.actor_creation_calls)<<",\"ticks\":"<<load(s.actor_ticks)
+        <<",\"pose_writes\":"<<load(s.actor_pose_writes)<<"}}";
     return value.str();
 }
 class Child {
@@ -448,6 +452,7 @@ int run(const Options& options, bool check_only) {
         }
         shared->child_pid=child.pid;
         Payload payload{};payload.struct_size=sizeof(payload);payload.version=protocol_version;payload.host_pid=GetCurrentProcessId();payload.child_pid=child.pid;
+        payload.actor_test=options.actor_follow_test?ActorTest::follow:ActorTest::off;
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);
@@ -464,12 +469,17 @@ int run(const Options& options, bool check_only) {
             "READY signal did not contain a matching successful bootstrap receipt");
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
+        ULONGLONG actor_report_at{};
         for(;;) {
             wait_foreign_close(receipt,child.pid,foreign_detected,monitor_error);
             if(foreign_detected)throw std::runtime_error("A foreign/Steam-relaunched Sekiro was observed; lifecycle is unverified");
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
+            if(options.actor_follow_test && GetTickCount64()-actor_report_at>=1000) {
+                actor_report_at=GetTickCount64();
+                receipt.emit("{\"event\":\"actor_status\",\"child_pid\":"+std::to_string(child.pid)+",\"native\":"+counters(*shared)+"}");
+            }
             if(GetTickCount64()>=deadline){timed_out=true;throw std::runtime_error("Owned child exceeded 30-minute run budget");}
         }
         require(GetExitCodeProcess(child.process,&exit_code)!=FALSE,"Cannot obtain child exit status");

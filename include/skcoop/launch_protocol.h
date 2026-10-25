@@ -12,7 +12,8 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=1;
+inline constexpr std::uint32_t protocol_version=2;
+enum class ActorTest : std::uint32_t { off=0, follow=1 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
 
@@ -33,6 +34,8 @@ struct Payload {
     wchar_t account[account_units];
     HANDLE mapping_handle;
     HANDLE ready_event;
+    ActorTest actor_test;
+    std::uint32_t actor_padding;
     std::uint64_t reserved[4];
 };
 
@@ -67,6 +70,11 @@ struct alignas(8) SharedStatus {
     volatile LONG64 native_directory_queries;
     volatile LONG64 native_copy_failures;
     volatile LONG64 native_destination_may_be_modified;
+    volatile LONG actor_phase;
+    volatile LONG actor_error;
+    volatile LONG64 actor_creation_calls;
+    volatile LONG64 actor_ticks;
+    volatile LONG64 actor_pose_writes;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);

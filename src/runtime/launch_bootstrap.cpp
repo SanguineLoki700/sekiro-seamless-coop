@@ -1,4 +1,5 @@
 #include "launch_bootstrap.h"
+#include "actor_native.h"
 #include "skcoop/launch_protocol.h"
 #include "../saves/native_io_hooks.hpp"
 #include <detours.h>
@@ -90,7 +91,8 @@ bool valid_initial_status() noexcept {
     if (shared->struct_size != sizeof(*shared) || shared->version != protocol_version ||
         shared->host_pid != config.host_pid || shared->child_pid != config.child_pid ||
         std::memcmp(shared->nonce, config.nonce, sizeof(config.nonce)) != 0 ||
-        load(shared->phase) != static_cast<LONG>(Phase::payload_prepared) || load(shared->fatal_error) != 0)
+        load(shared->phase) != static_cast<LONG>(Phase::payload_prepared) || load(shared->fatal_error) != 0 ||
+        load(shared->actor_phase) || load(shared->actor_error))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{
@@ -100,7 +102,8 @@ bool valid_initial_status() noexcept {
         &shared->successful_backup_reads, &shared->process_detach_count, &shared->native_redirected,
         &shared->native_denied, &shared->native_passthrough, &shared->native_internal_bypass,
         &shared->native_appdata_redirects, &shared->native_directory_queries, &shared->native_copy_failures,
-        &shared->native_destination_may_be_modified};
+        &shared->native_destination_may_be_modified, &shared->actor_creation_calls,
+        &shared->actor_ticks, &shared->actor_pose_writes};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;
@@ -125,6 +128,7 @@ bool initialize(const void* payload, DWORD bytes) {
         !config.mapping_handle || config.mapping_handle == INVALID_HANDLE_VALUE ||
         !config.ready_event || config.ready_event == INVALID_HANDLE_VALUE ||
         config.mapping_handle == config.ready_event) return false;
+    if (config.actor_padding || (config.actor_test != ActorTest::off && config.actor_test != ActorTest::follow)) return false;
     if (std::all_of(std::begin(config.nonce), std::end(config.nonce), [](std::uint8_t c) { return c == 0; }))
         return false;
     for (const auto value : config.reserved) if (value != 0) return false;
@@ -189,6 +193,11 @@ bool initialize(const void* payload, DWORD bytes) {
         if (!removed) TerminateProcess(GetCurrentProcess(), ERROR_DLL_INIT_FAILED);
         else { delete controller; controller = nullptr; active = false; }
         return false;
+    }
+    if (config.actor_test == ActorTest::follow && !skcoop::actors::start_native_demo(shared)) {
+        // Save protection remains valid if the optional actor worker cannot start.
+        InterlockedExchange(&shared->actor_error,1);
+        InterlockedExchange(&shared->actor_phase,6);
     }
     return true;
 }
