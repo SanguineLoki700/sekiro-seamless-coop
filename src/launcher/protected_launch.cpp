@@ -1,5 +1,6 @@
 // Explicit protected integration launch; this is not multiplayer gameplay.
 #include "protected_launch.h"
+#include "file_open_error.h"
 #include "receipt_budget.h"
 #include "launch_settings.h"
 #include "steam_install.h"
@@ -137,7 +138,7 @@ public:
     File(const fs::path& requested,DWORD sharing,std::uint64_t maximum=128u*1024u*1024u,bool hash=true)
         :path(normalized(requested)),parent(path.parent_path()),handle(CreateFileW(path.c_str(),GENERIC_READ,sharing,nullptr,
             OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr)) {
-        require(handle.valid(),"Cannot exclusively/read-only pin an existing selected file");
+        if(!handle.valid())throw FileOpenError(path,GetLastError());
         BY_HANDLE_FILE_INFORMATION info{};
         require(GetFileInformationByHandle(handle.get(),&info)&&info.nNumberOfLinks==1&&
             !(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT)),"File is a directory/reparse point/hardlink or unavailable");
