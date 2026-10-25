@@ -1,4 +1,5 @@
 #include "launch_settings.h"
+#include "skcoop/lan/protocol.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -114,14 +115,24 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else if (key == L"account") bit = 4;
         else if (key == L"receipt_directory") bit = 8;
         else if (key == L"actor_test") bit = 16;
+        else if (key == L"lan_role") bit = 32;
+        else if (key == L"lan_code") bit = 64;
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
         if (bit == 16) {
-            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion") invalid("Unknown actor_test mode.");
+            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion" && value != L"lan") invalid("Unknown actor_test mode.");
             result.actor_follow_test = value != L"off";
             result.actor_locomotion_test = value == L"locomotion";
             result.actor_pad_reference_test = value == L"pad-reference";
             result.actor_graph_locomotion_test = value == L"graph-locomotion";
+            result.actor_lan_test = value == L"lan";
+        } else if(bit==32) {
+            if(value!=L"host"&&value!=L"guest") invalid("LAN role must be host or guest.");
+            result.lan_role=value==L"host"?1u:2u;
+        } else if(bit==64) {
+            if(value.size()>=160 || std::any_of(value.begin(),value.end(),[](wchar_t c){return c<33||c>126;}))invalid("Invalid LAN code.");
+            for(const auto c:value)result.lan_code.push_back(static_cast<char>(c));
+            if(!lan::parse_ticket(result.lan_code))invalid("Invalid LAN code.");
         } else if (bit == 4) {
             if (!valid_account(value)) invalid("Account must be a positive canonical decimal uint64.");
             result.account = value;
@@ -134,6 +145,7 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         seen |= bit;
     }
     if (!section || (seen & 15) != 15) invalid("All four [LAUNCH] keys are required.");
+    if(result.actor_lan_test ? (seen&96)!=96 : (seen&96)!=0)invalid("LAN mode requires both LAN settings; other modes forbid them.");
     return result;
 }
 

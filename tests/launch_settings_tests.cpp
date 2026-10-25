@@ -199,6 +199,13 @@ int main() {
     const auto graph=parse_launch_settings(ini()+"actor_test=graph-locomotion\n");
     require(graph.actor_graph_locomotion_test && graph.actor_follow_test && !graph.actor_locomotion_test && !graph.actor_pad_reference_test, "Native graph test must be explicit and separate.");
     require(!parse_launch_settings(ini()+"actor_test=off\n").actor_follow_test, "Explicit off changed.");
+    const std::string code="SKL1|192.168.1.2|24860|11111111111111111111111111111111|2222222222222222222222222222222222222222222222222222222222222222";
+    const auto lan=parse_launch_settings(ini()+"actor_test=lan\nlan_role=guest\nlan_code="+code+"\n");
+    require(lan.actor_lan_test&&lan.lan_role==2&&lan.lan_code==code&&lan.actor_follow_test,"LAN configuration missing.");
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\n");});
+    invalid([&]{(void)parse_launch_settings(ini()+"lan_role=guest\nlan_code="+code+"\n");});
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\nlan_role=other\nlan_code="+code+"\n");});
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\nlan_role=host\nlan_code=broken\n");});
     invalid([&] { (void)parse_launch_settings(ini()+"actor_test=true\n"); });
     invalid([&] { (void)parse_launch_settings(ini()+"actor_test=follow\nactor_test=off\n"); });
     const std::array<std::pair<std::string_view, std::function<void()>>, 11> tests{{

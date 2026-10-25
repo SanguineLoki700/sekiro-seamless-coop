@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -19,12 +20,16 @@ struct LaunchSettings {
     bool actor_locomotion_test{};
     bool actor_pad_reference_test{};
     bool actor_graph_locomotion_test{};
+    bool actor_lan_test{};
+    std::uint32_t lan_role{};
+    std::string lan_code;
 };
 
 // Strict UTF-8 INI subset: exactly one [LAUNCH] section and the four required,
 // case-sensitive keys test_executable, coop_profile_root, account and
 // receipt_directory. Optional actor_test defaults to off; follow, locomotion,
-// pad-reference and graph-locomotion are explicit experiments.
+// pad-reference, graph-locomotion and lan are explicit experiments. Only lan
+// requires lan_role (host/guest) and lan_code; other modes forbid those keys.
 // One initial BOM, whole-line ;/# comments and surrounding
 // ASCII whitespace are accepted. Values are neither quoted nor expanded.
 // Paths must be explicit local drive paths with fewer than 1024 UTF-16 units

@@ -1,0 +1,51 @@
+SEKIRO CO-OP - PROTOTIPO DE TESTE LAN
+
+Este pacote testa a conexao e prepara o teste de movimentacao de 2 jogadores.
+Ataques, dano, inimigos, campanha, viagens e convites Steam ainda nao sincronizam.
+
+1. Extraia o ZIP inteiro para uma pasta curta, por exemplo C:\SekiroCoopTeste.
+   Nao copie nada para a instalacao normal do jogo.
+2. Abra SekiroCoopTeste.exe nos dois computadores da mesma rede.
+3. No PC, escolha o IPv4 da sua rede e clique em Criar no PC. Copie o codigo.
+4. No notebook, cole o codigo inteiro e clique em Entrar no notebook.
+5. Aguarde a mensagem Conexao verificada nos dois sentidos. Salve o resultado
+   nos dois computadores. Se o Firewall perguntar, permita na rede privada.
+   Este teste funciona sem Sekiro e sem Steam; ele so comprova a rede.
+
+TESTE NO JOGO - SOMENTE DEPOIS DE COMBINAR O TESTE COM O DESENVOLVEDOR
+
+Instale o Sekiro pela Steam no notebook, abra-o normalmente uma vez, carregue
+o mesmo save inicial do PC e feche pelo menu. Mantenha o jogo fechado nos dois.
+O primeiro prototipo exige o mesmo save de partida nos dois computadores.
+O pacote nao inclui nem transfere seus saves.
+
+1. No PC, selecione PC (criar sala) e clique em Preparar teste no jogo.
+   A preparacao cria um NOVO codigo de sala. Compartilhe esse novo codigo.
+2. No notebook, cole esse novo codigo, selecione Notebook (entrar) e prepare.
+   A copia completa do jogo usa cerca de 25 GB extras no mesmo disco da Steam.
+   A janela pode demorar; aguarde. Feche o Sekiro durante toda a preparacao.
+3. Use Copiar linha da Steam. Cole em Sekiro > Propriedades > Geral >
+   Opcoes de inicializacao, em cada computador. A preparacao nao altera a Steam.
+4. A Steam abre e autentica cada jogo normalmente. O pacote nao resolve as
+   restricoes de jogar simultaneamente na mesma conta. Se ela impedir a segunda
+   inicializacao, pare nesse ponto e informe o resultado.
+5. No teste combinado, abra o PC primeiro e depois o notebook. Carregue o save
+   nos dois. Fique em um lugar seguro e proximo, sem inimigos. Ande alguns passos
+   com um jogador para evitar que os dois comecem sobrepostos; depois pressione
+   F8 uma vez em cada janela. O limite inicial de distancia e 25 metros.
+6. Cada um deve ver o outro caminhar, virar e parar. F9 pausa a representacao
+   remota; F10 encerra o teste. O movimento tem um limite de 2 minutos.
+   Nao use ataques, viagens, descanso ou troca de area neste teste inicial.
+7. Feche ambos pelo menu e apague a linha de Opcoes de inicializacao da Steam.
+
+Os saves originais .sl2 ficam protegidos durante o teste. Cada preparacao cria
+um novo perfil .co2 dentro da pasta SeamlessCoop, preservando tentativas antigas.
+Para repetir depois de gravar progresso, prepare novamente os dois perfis e use
+as novas linhas da Steam. Nunca apague um perfil sem antes conferir o que contem.
+
+Nao compartilhe a pasta depois de usar a preparacao: ela passara a conter seus
+perfis, codigos e registros privados. Compartilhe somente o ZIP original.
+O codigo de sala permite participar do teste: envie apenas ao outro computador.
+
+Ainda falta validar dois jogos reais e depois os criterios de quatro maquinas.
+Este pacote nao representa uma versao publica jogavel de seamless co-op.
