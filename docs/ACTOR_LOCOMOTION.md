@@ -141,6 +141,16 @@ estava limpa nos dois. Ambos tinham módulos de comportamento do mesmo tipo,
 donos corretos e valor1 no campo de velocidade de animação pesquisado. Isso
 restringe a investigação, mas não estabelece uma causa nem um setter seguro.
 
-A próxima verificação é a instância de comportamento/animação e as ligações
-de suas variáveis, antes de tentar mais alterações na entrada. A referência
-não representa controle remoto nem muda o percentual verificado.
+A leitura seguinte confirmou instâncias de animação distintas e91 ligações
+válidas em cada uma. Comandar diretamente `MoveSpeedLevel` e `MoveAngle` no
+adicional produziu a primeira caminhada com animação, confirmada pelo
+participante e por3,02 unidades de deslocamento. Veja o
+[registro do teste](validation/local-animation-2026-10-25.md).
+
+O novo modo explícito `actor_test=graph-locomotion` integra esse caminho à DLL
+com um controlador base próprio. Lê as variáveis do original e aplica as do
+adicional no callback do mundo; não instala hooks no pad original nem usa o
+finalizador de ações das tentativas anteriores. A orientação continua usando
+o alvo do original e o delta do adicional. O payload privado passa à versão8.
+**O protótipo está confirmado; a integração C++ ainda aguarda teste no jogo.**
+O resultado ainda não representa controle remoto nem muda o percentual verificado.

@@ -4,6 +4,7 @@
 #include "locomotion_input.h"
 #include "vtable_slot.h"
 #include "controller_update_abi.h"
+#include "graph_variable_abi.h"
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
@@ -33,6 +34,8 @@ ULONGLONG input_deadline{};
 LocomotionInput captured_input{};
 ULONGLONG captured_at{};
 bool captured_valid{};
+bool graph_locomotion{};
+std::uint64_t graph_writes{},graph_nonzero{};
 LARGE_INTEGER frequency{};
 RegionQueries regions;
 struct InputFailure { Error error; };
@@ -150,6 +153,7 @@ public:
         reinterpret_cast<Setter>(base+0x9f6320)(reinterpret_cast<void*>(p),aligned.data());
     }
     void command_locomotion(Token actor,bool enabled) override {
+        if(graph_locomotion) { apply_graph_locomotion(actor,enabled); return; }
         const auto source=reinterpret_cast<void*>(pointer(frame.primary+0x58));
         if(actor!=bound_actor || source!=InterlockedCompareExchangePointer(&bound_source,nullptr,nullptr))captured_valid=false;
         bound_actor=actor; input_enabled=enabled; input_deadline=GetTickCount64()+250;
@@ -160,6 +164,56 @@ public:
         if(!enabled)apply_locomotion(actor,false);
     }
     void disarm() noexcept { InterlockedExchangePointer(&bound_controller,nullptr); InterlockedExchangePointer(&bound_source,nullptr); bound_actor=0; input_enabled=false; captured_valid=false; }
+    GraphVariable graph_variable(Token actor,unsigned ordinal,int expected) {
+        const auto module=pointer(pointer(actor+0x1ff8)+0x28);
+        if(!typed(module,0x2a790a8) || pointer(module+8)!=actor || read<std::uint64_t>(module+0xaf0)!=91)
+            throw InputFailure{Error::input_owner};
+        const auto graph=pointer(module+0x10);
+        if(!graph || !readable(graph,0xa0) || read<int>(module+0x980+ordinal*4)!=expected)
+            throw InputFailure{Error::input_value};
+        GraphVariable result{};
+        const auto returned=reinterpret_cast<MakeGraphVariable>(base+0xffe740)(reinterpret_cast<void*>(graph),&result,expected);
+        if(returned!=&result || result.index!=expected || result.character!=pointer(graph+0x28) ||
+            result.overrides!=graph+0x98 || !readable(result.character,0xa0))throw InputFailure{Error::input_owner};
+        return result;
+    }
+    void apply_graph_locomotion(Token actor,bool enabled) {
+        const auto primary=frame.primary;
+        if(actor==primary || pointer(frame.world+0x88)!=primary || pointer(frame.registry)!=primary ||
+            pointer(frame.registry+0x38)!=actor || !typed(actor,0x2a2b338))throw InputFailure{Error::input_owner};
+        const auto destination=pointer(actor+0x58),source=pointer(primary+0x58);
+        if(!typed(destination,0x29d2ae0) || !typed(source,0x29d4b30) ||
+            pointer(destination+0x300)!=actor || pointer(source+0x300)!=primary)throw InputFailure{Error::input_owner};
+        const auto guest_speed=graph_variable(actor,2,213),guest_angle=graph_variable(actor,1,209);
+        const auto source_speed=graph_variable(primary,2,213),source_angle=graph_variable(primary,1,209);
+        if(source_speed.character==guest_speed.character || source_speed.overrides==guest_speed.overrides)
+            throw InputFailure{Error::input_owner};
+        const auto set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
+        const auto get=reinterpret_cast<ReadGraphFloat>(base+0xff3250);
+        // Release before reading new source data; validation failure cannot latch
+        // the previous frame's movement on an otherwise valid owned graph.
+        set(&guest_speed,0);set(&guest_angle,0);graph_writes+=2;
+        for(const auto offset:{0x20u,0x40u}) {
+            MEMORY_BASIC_INFORMATION m{};
+            if(!readable(destination+offset,16) || !regions.query(destination+offset,m) ||
+                ((m.Protect&0xff)!=PAGE_READWRITE && (m.Protect&0xff)!=PAGE_WRITECOPY))throw InputFailure{Error::input_range};
+        }
+        const Vector zero{};std::memcpy(reinterpret_cast<void*>(destination+0x20),zero.data(),16);
+        if(!enabled) { ++zero_commands;return; }
+        const float speed=get(&source_speed),angle=get(&source_angle);
+        if(!std::isfinite(speed)||speed<0||speed>2.1f||!std::isfinite(angle)||std::abs(angle)>360)
+            throw InputFailure{Error::input_value};
+        LocomotionInput orientation{};orientation.rotation_target=read<Vector>(source+0x40);
+        if(!relative_rotation(orientation.rotation_target,native_vector(0x9eec10,actor),orientation.rotation_delta) ||
+            !valid_locomotion_input(orientation))throw InputFailure{Error::input_value};
+        std::memcpy(reinterpret_cast<void*>(destination+0x20),orientation.rotation_delta.data(),16);
+        std::memcpy(reinterpret_cast<void*>(destination+0x40),orientation.rotation_target.data(),16);
+        const float bounded_speed=std::min(speed,1.f); // Walking/jog reference only.
+        set(&guest_speed,bounded_speed);set(&guest_angle,angle);graph_writes+=2;
+        const auto observed=get(&guest_speed);
+        if(!std::isfinite(observed)||std::abs(observed-bounded_speed)>.01f) { set(&guest_speed,0);++graph_writes;throw InputFailure{Error::input_value}; }
+        if(bounded_speed>.001f)++graph_nonzero;
+    }
     void capture_locomotion(void* controller,void* component) {
         const auto p=frame.primary, source=reinterpret_cast<std::uintptr_t>(controller);
         if(pointer(frame.world+0x88)!=p || pointer(p+0x58)!=source || pointer(p+0x50)!=reinterpret_cast<std::uintptr_t>(component) ||
@@ -252,6 +306,8 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_action_finalizes,static_cast<LONG64>(action_finalizes));
     InterlockedExchange64(&status->actor_invalid_deltas,static_cast<LONG64>(invalid_deltas));
     InterlockedExchange64(&status->actor_observed_displacement_mm,static_cast<LONG64>(demo.observed_displacement_mm));
+    InterlockedExchange64(&status->actor_graph_writes,static_cast<LONG64>(graph_writes));
+    InterlockedExchange64(&status->actor_graph_nonzero,static_cast<LONG64>(graph_nonzero));
 }
 void step(void* creator) noexcept {
     try {
@@ -358,6 +414,10 @@ constexpr Anchor anchors[]{
 constexpr Anchor pad_reference_anchors[]{
     {0x7f8480,"10a9addc69ce31a7ec3ae769be728d2a41253e85cbaf354ba385daf05f379ddb"},
     {0x7ed3a0,"dabb8600e9f55694e6c0d6a7174efa3f3618629b7da38e1db611d70331d0cd12"}};
+constexpr Anchor graph_anchors[]{
+    {0xffe740,"c560c7def08a438384bc376a0aa7b0024a1e830484f0fcb071a7a9b1dc9046d4"},
+    {0xff3250,"cb2bcfec2f35e465f0d46daa920fc7ceb3a15e122335da88fa8963bd1efa297d"},
+    {0xff3570,"6e4e5585f3f31ab53c2424583b8f8c7b94ce214341f4a757080f2716a9f7dd9d"}};
 bool anchor_matches(const Anchor& a) noexcept {
     if (!readable(base+a.rva,16,true)) return false;
     std::array<unsigned char,32> digest{};
@@ -370,10 +430,11 @@ bool anchor_matches(const Anchor& a) noexcept {
 }
 bool anchors_match() noexcept {
     for (const auto& a:anchors) {
-        if(!demo.native_locomotion && (a.rva==0x7e3de0 || a.rva==0xb2bf40 || a.rva==0xb2c190 || a.rva==0x7ef120))continue;
+        if((!demo.native_locomotion || graph_locomotion) && (a.rva==0x7e3de0 || a.rva==0xb2bf40 || a.rva==0xb2c190 || a.rva==0x7ef120))continue;
         if(!anchor_matches(a))return false;
     }
     if(demo.native_pad_reference)for(const auto& a:pad_reference_anchors)if(!anchor_matches(a))return false;
+    if(graph_locomotion)for(const auto& a:graph_anchors)if(!anchor_matches(a))return false;
     return true;
 }
 DWORD WINAPI worker(void*) noexcept {
@@ -393,7 +454,7 @@ DWORD WINAPI worker(void*) noexcept {
     if(!exchange_vtable_slot(slot,reinterpret_cast<void*>(original_update),reinterpret_cast<void*>(&update))) {
         demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
     }
-    if(demo.native_locomotion) {
+    if(demo.native_locomotion && !graph_locomotion) {
         auto* controller_slot=reinterpret_cast<void* volatile*>(base+0x29d2ae0+0x48);
         original_controller_update=reinterpret_cast<ControllerUpdate>(base+0x7e3de0);
         if(!exchange_vtable_slot(controller_slot,reinterpret_cast<void*>(original_controller_update),reinterpret_cast<void*>(&controller_update))) {
@@ -408,7 +469,7 @@ DWORD WINAPI worker(void*) noexcept {
             demo.fail(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
         }
     }
-    InterlockedOr64(&status->hooks_mask,demo.native_locomotion?14:2);
+    InterlockedOr64(&status->hooks_mask,(demo.native_locomotion && !graph_locomotion)?14:2);
     InterlockedExchange(&entered,0);
     // The callback and immutable original remain pinned until process exit.
     // Stopping the bounded demo disables all actor reads/writes, without freeing actors.
@@ -418,7 +479,8 @@ DWORD WINAPI worker(void*) noexcept {
 bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode) noexcept {
     if (status || !shared) return false;
     status=shared;
-    demo.native_locomotion=mode==launch::ActorTest::locomotion;
+    graph_locomotion=mode==launch::ActorTest::graph_locomotion;
+    demo.native_locomotion=mode==launch::ActorTest::locomotion || graph_locomotion;
     demo.native_pad_reference=mode==launch::ActorTest::pad_reference;
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(Phase::waiting));
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);

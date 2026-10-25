@@ -88,6 +88,10 @@ void Demo::tick(Game& game) {
         last_ms_=f.milliseconds; return;
     }
     if (native_locomotion) {
+        const auto current=game.position(actor_);
+        if(!valid_position(current)) { fail(Error::invalid_pose); return; }
+        observed_displacement_mm=std::max(observed_displacement_mm,
+            static_cast<std::uint64_t>(std::llround(distance(current,observed_origin_)*1000.)));
         last_ms_=f.milliseconds;
         game.command_locomotion(actor_,!motion_paused);
         return;
