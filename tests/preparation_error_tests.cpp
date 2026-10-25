@@ -7,6 +7,12 @@
 namespace fs=std::filesystem;
 using namespace skcoop::launcher;
 void require(bool value,const char* why){if(!value)throw std::runtime_error(why);}
+fs::path physical_temp(){
+ const auto selected=fs::temp_directory_path();const auto handle=CreateFileW(selected.c_str(),FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+ require(handle!=INVALID_HANDLE_VALUE,"Cannot inspect test temporary parent");std::wstring resolved(32768,0);
+ const auto n=GetFinalPathNameByHandleW(handle,resolved.data(),static_cast<DWORD>(resolved.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);CloseHandle(handle);
+ require(n>4&&n<resolved.size(),"Cannot resolve physical test parent");resolved.resize(n);require(resolved.starts_with(L"\\\\?\\"),"Test parent is not a local DOS path");resolved.erase(0,4);return fs::path(resolved);
+}
 void missing_or_locked(const fs::path& internal,const std::string& code,const fs::path& expected,DWORD error){
  try{(void)prepare_lan_test(internal,1,code);throw std::runtime_error("Preparation unexpectedly succeeded");}
  catch(const FileOpenError& e){
@@ -16,7 +22,7 @@ void missing_or_locked(const fs::path& internal,const std::string& code,const fs
  }
 }
 int wmain(int argc,wchar_t** argv){fs::path root;HANDLE lock=INVALID_HANDLE_VALUE;try{
- require(argc==2,"Expected compiled runtime path");root=fs::temp_directory_path()/(L"skcoop-prep-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L"-\u00e9");
+ require(argc==2,"Expected compiled runtime path");root=physical_temp()/(L"skcoop-prep-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L"-\u00e9");
  require(fs::create_directory(root),"Cannot create fixture");
  const auto code=skcoop::lan::ticket_text({"127.0.0.1",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});
  const auto runtime=root/L"skcoop_runtime.dll";
