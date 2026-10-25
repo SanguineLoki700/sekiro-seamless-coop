@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include "skcoop/lan/peer.hpp"
 #include "protected_launch.h"
+#include "file_open_error.h"
 #include <algorithm>
 #include <fstream>
 #include <memory>
@@ -18,7 +19,7 @@ HWND window{},address_box{},code_box{},status_box{},host_button{},join_button{},
 std::unique_ptr<Peer> peer;Ticket ticket;Status last_status{};std::uint64_t connected_at{};bool passed{};
 std::thread prepare_thread;std::atomic<bool> preparing{},prepare_done{};std::wstring prepare_result,prepare_error;
 std::filesystem::path directory(){std::wstring s(32768,0);const auto n=GetModuleFileNameW(nullptr,s.data(),static_cast<DWORD>(s.size()));if(!n||n==s.size())throw std::runtime_error("Cannot find package folder");s.resize(n);return std::filesystem::path(s).parent_path();}
-std::wstring wide(std::string_view s){return {s.begin(),s.end()};}
+std::wstring wide(std::string_view s){return skcoop::launcher::diagnostic_wide(s);}
 std::wstring text(HWND h){const auto n=GetWindowTextLengthW(h);if(n>1024)throw std::runtime_error("Text exceeds limit");std::wstring s(n+1,0);GetWindowTextW(h,s.data(),n+1);s.resize(n);return s;}
 std::string ascii(HWND h){const auto s=text(h);if(std::any_of(s.begin(),s.end(),[](auto c){return c<32||c>126;}))throw std::runtime_error("Invalid ASCII value");std::string out;for(auto c:s)out.push_back(static_cast<char>(c));return out;}
 void copy(std::wstring_view s){if(!OpenClipboard(window))throw std::runtime_error("Clipboard unavailable");

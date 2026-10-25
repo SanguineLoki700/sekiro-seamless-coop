@@ -21,3 +21,9 @@ O preparador reutilizou a instalação de teste independente já presente no PC 
 Uma fixture de peer roteirizado está disponível apenas para validar um Sekiro real contra outro processo. Ela não faz parte do ZIP do participante e ainda não foi usada para aceitar movimento nativo LAN. A confirmação anterior de caminhada animada local está no [relatório próprio](local-animation-2026-10-25.md) e não foi reclassificada como rede.
 
 Próximos resultados necessários: dois verificadores na rede física; um teste nativo limitado; depois dois Sekiros com controle independente e recibos de ambos, observando a autorização normal da Steam. Os critérios de quatro máquinas permanecem obrigatórios para a v1.
+
+## Correção do diagnóstico de preparação
+
+O participante encontrou uma falha de abertura no notebook depois de abrir o jogo normal. A mensagem anterior omitira o arquivo selecionado e o erro do Windows, portanto não permitia distinguir um componente do pacote, um save/backup ou um arquivo da instalação. A causa no notebook continua pendente de identificação; não foi atribuída à pasta de instalação por suposição.
+
+O erro agora conserva o caminho exato e o código Win32 e a interface mostra caminhos Unicode corretamente. Um teste executa a preparação real com DLL ausente, arquivo bloqueado e lançador ausente; verifica preservação do arquivo bloqueado, ausência de arquivos novos e de código de sala na mensagem. Release e **21/21 conjuntos CTest** passaram. O caminho Steam automático, as exigências de proteção e os protocolos continuam iguais; a correção não aceita critérios de multiplayer nem resolve por si só um arquivo ausente no notebook.

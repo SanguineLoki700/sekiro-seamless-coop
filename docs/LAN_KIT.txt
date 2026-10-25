@@ -47,5 +47,14 @@ Nao compartilhe a pasta depois de usar a preparacao: ela passara a conter seus
 perfis, codigos e registros privados. Compartilhe somente o ZIP original.
 O codigo de sala permite participar do teste: envie apenas ao outro computador.
 
+SE A PREPARACAO PARAR
+
+A instalacao original do jogo e localizada pelo registro e manifesto da Steam;
+nao precisa mover a instalacao nem selecionar sua pasta manualmente.
+Os saves originais ficam em %APPDATA%\Sekiro, separados dos arquivos do jogo.
+A janela de erro mostra o arquivo exato e o codigo do Windows: arquivo ausente,
+acesso negado e arquivo em uso sao problemas diferentes. Informe essa mensagem
+antes de mover arquivos, criar backups manualmente ou repetir a preparacao.
+
 Ainda falta validar dois jogos reais e depois os criterios de quatro maquinas.
 Este pacote nao representa uma versao publica jogavel de seamless co-op.
