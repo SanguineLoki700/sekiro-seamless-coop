@@ -47,7 +47,21 @@ variáveis, lendo velocidade/ângulo do original e escrevendo apenas no adiciona
 Confere tipos, donos, instâncias diferentes, ligações e anchors da build antes
 das chamadas. Usa handles próprios de24 bytes, sem copiar a estrutura do jogo.
 F9 pausa; F10, expiração e mudança de cena encerram os comandos. Não reposiciona
-o personagem continuamente. **Essa integração ainda aguarda o teste no jogo.**
+o personagem continuamente.
+
+O teste posterior da DLL, fonte `ebfb95574f08dc6c409cf7d599701be77b9dabe8`,
+foi confirmado pelo participante: **caminhou, virou e parou com animação**.
+O registro mediu10,241 unidades de deslocamento, uma criação, um único
+posicionamento inicial e zero erros. O recibo final registrou3710 comandos de
+variável e490 quadros com velocidade não nula. Não houve
+observador Frida nesse processo, hooks no pad original ou no controlador do
+adicional: somente o callback do mundo e a proteção já existente dos saves.
+
+A saída posterior terminou com código0, sem timeout, com recibo final; os
+hashes dos saves originais e do perfil co-op anteriormente aceito permaneceram
+inalterados. O acompanhamento animado local pela DLL está confirmado.
+F9 e F10 têm testes de política independentes; não foram solicitados como uma
+nova rodada manual nesta sessão.
 
 MSVC Release,17 conjuntos CTest,26 testes Python e conferência do ledger passaram.
 O experimento real teve uma pessoa e uma máquina. Movimento remoto, ataques,

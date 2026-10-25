@@ -152,5 +152,8 @@ com um controlador base próprio. Lê as variáveis do original e aplica as do
 adicional no callback do mundo; não instala hooks no pad original nem usa o
 finalizador de ações das tentativas anteriores. A orientação continua usando
 o alvo do original e o delta do adicional. O payload privado passa à versão8.
-**O protótipo está confirmado; a integração C++ ainda aguarda teste no jogo.**
+**O participante confirmou também a integração C++: caminhou, virou e parou
+com animação.** O registro mediu10,241 unidades de deslocamento, uma criação,
+um posicionamento inicial e zero erros, sem Frida nesse processo. A saída foi0,
+com recibo final e originais preservados.
 O resultado ainda não representa controle remoto nem muda o percentual verificado.
