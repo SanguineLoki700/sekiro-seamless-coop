@@ -146,7 +146,7 @@
           "issue": "https://github.com/SanguineLoki700/sekiro-seamless-coop/issues/5",
           "label": "Movimento e animações sincronizados",
           "weight": 6,
-          "status": "planned",
+          "status": "in_progress",
           "min_players": 2,
           "min_machines": 2,
           "acceptance": "Posição, orientação e animações são replicadas com interpolação e correções limitadas durante exploração real.",
