@@ -53,7 +53,7 @@ A label GitHub `status:validation` significa que o trabalho aguarda validação;
 - [ ] **actors-spawn** — Personagem remoto real e visível (6 pontos; Em andamento)
   - Aceitação: Duas instalações exibem atores remotos controláveis com modelo, armas e animações, sem substituir o jogador local.
   - Validação mínima: 2 jogador(es), 2 máquina(s).
-- [ ] **actors-movement** — Movimento e animações sincronizados (6 pontos; Planejado)
+- [ ] **actors-movement** — Movimento e animações sincronizados (6 pontos; Em andamento)
   - Aceitação: Posição, orientação e animações são replicadas com interpolação e correções limitadas durante exploração real.
   - Validação mínima: 2 jogador(es), 2 máquina(s).
 - [ ] **actors-traversal** — Gancho, natação, furtividade e próteses (4 pontos; Planejado)

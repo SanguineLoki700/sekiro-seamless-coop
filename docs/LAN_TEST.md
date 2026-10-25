@@ -32,6 +32,8 @@ O jogo e executado somente na copia independente verificada, com os arquivos ori
 
 Os testes independentes cobrem codec/sessao, dois verificadores em processos separados, descoberta UDP, endereco de origem, recusa de resposta sem nonce correspondente, conexao HMAC real e expiracao sem anfitriao. A preparacao real reutilizou o mesmo perfil duas vezes sem copiar save pessoal. Relatorio e limites em [simple-launcher-2026-10-25.md](validation/simple-launcher-2026-10-25.md).
 
+Depois desses testes, o participante confirmou caminhada, giro e parada com animação nos dois jogos reais, no PC e notebook. O recibo do PC confirmou movimento recebido, uma criação de ator adicional e saída com código zero; os saves pessoais do PC foram rechecados e preservados. O [relatório do primeiro movimento LAN](validation/native-lan-motion-2026-10-25.md) separa essa observação dos dados ainda não coletados no notebook e dos critérios completos ainda pendentes.
+
 Ataques, postura, dano, IA, chefes, inventario, viagens, campanha, reconexao e convites Steam permanecem fora deste incremento. O progresso permanece10%; os criterios de quatro maquinas continuam obrigatorios.
 
 Para montar um ZIP limpo depois da compilacao, usar `python tools/package_lan_test.py --out local/skcoop-lan-simple-windows-x64.zip`. O empacotador usa uma lista explicita e nunca inclui perfis, saves, chaves, arquivos do jogo ou registros.
