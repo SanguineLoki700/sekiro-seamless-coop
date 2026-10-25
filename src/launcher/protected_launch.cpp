@@ -595,7 +595,7 @@ std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::
     require(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Valve\\Steam\\ActiveProcess",L"ActiveUser",RRF_RT_REG_DWORD,&type,&active,&bytes)==ERROR_SUCCESS&&active,"Open Steam and sign in before preparing the game");
     const auto account=std::to_wstring(76561197960265728ull+active);
     wchar_t roaming_buffer[MAX_PATH]{};require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming_buffer)),"Cannot find original save folder");
-    Directory roaming(roaming_buffer);File primary(roaming.path/L"Sekiro"/account/L"S0000.sl2",0,64u*1024u*1024u);
+    Directory roaming(roaming_buffer);separate(roaming,internal);separate(original.parent,internal);File primary(roaming.path/L"Sekiro"/account/L"S0000.sl2",0,64u*1024u*1024u);
     File backup(roaming.path/L"Sekiro"/account/L"S0000.sl2.bak",0,64u*1024u*1024u);
     auto game=installed.library_root/L"steamapps"/L"common"/L"Sekiro-SkCoop-Test";ensure_setup_directory(game);
     Directory test(game);separate(original.parent,test);separate(internal,test);separate(roaming,test);

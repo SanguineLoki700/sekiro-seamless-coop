@@ -34,4 +34,3 @@ int main(){try{
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m);m.motion.position[0]=100;g.tick(d,m);require(d.phase==Phase::failed&&g.writes==0);}
  std::cout<<"PASS absent-peer refusal, independent remote commands, stale release and scene lifetime\n";return 0;
  }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
-
