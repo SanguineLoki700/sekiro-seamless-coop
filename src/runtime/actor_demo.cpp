@@ -66,6 +66,7 @@ void Demo::tick(Game& game) {
     if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= 120000 || f.milliseconds - last_ms_ > 250) {
         phase = Phase::stopped; return;
     }
+    if (motion_paused) { last_ms_ = f.milliseconds; return; }
     Vector target = f.position;
     for (unsigned i=0; i<3; ++i) target[i] += offset_[i];
     Vector current = game.position(actor_);

@@ -32,6 +32,7 @@ public:
     void fail(Error e) noexcept { phase = Phase::failed; error = e; }
     Phase phase{Phase::waiting};
     Error error{};
+    bool motion_paused{};
     std::uint64_t creation_calls{}, ticks{}, pose_writes{};
 private:
     Frame original_{};

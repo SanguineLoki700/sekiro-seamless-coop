@@ -216,7 +216,7 @@ void load_from_main(const fs::path& executable, const fs::path& runtime, const T
 }
 
 enum class Mutation { missing, truncated, size, version, pid, host, zero_nonce, nonce_mismatch,
-    reserved, status_reserved, actor_mode, actor_padding, actor_status, identity, digest, pe, path };
+    reserved, status_reserved, actor_mode, actor_padding, actor_status, actor_metrics, identity, digest, pe, path };
 void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation mutation) {
     tree.clear_marker();
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedStatus), nullptr));
@@ -281,6 +281,7 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
     if (mutation == Mutation::actor_mode) payload.actor_test = static_cast<ActorTest>(99);
     if (mutation == Mutation::actor_padding) payload.actor_padding = 1;
     if (mutation == Mutation::actor_status) status->actor_ticks = 1;
+    if (mutation == Mutation::actor_metrics) status->actor_factory_us = 1;
     if (mutation != Mutation::missing) {
         const DWORD count = static_cast<DWORD>(sizeof(payload) - (mutation == Mutation::truncated ? 1u : 0u));
         require(DetourCopyPayloadToProcess(process.process.get(), payload_guid, &payload, count) != FALSE,
@@ -326,7 +327,7 @@ int wmain(int argc, wchar_t** argv) {
         unsigned passed = 2;
         for (const auto mutation : {Mutation::missing, Mutation::truncated, Mutation::size, Mutation::version,
             Mutation::pid, Mutation::host, Mutation::zero_nonce, Mutation::nonce_mismatch, Mutation::reserved,
-            Mutation::status_reserved, Mutation::actor_mode, Mutation::actor_padding, Mutation::actor_status, Mutation::identity}) {
+            Mutation::status_reserved, Mutation::actor_mode, Mutation::actor_padding, Mutation::actor_status, Mutation::actor_metrics, Mutation::identity}) {
             reject_before_startup(runtime, tree, mutation);
             ++passed;
         }

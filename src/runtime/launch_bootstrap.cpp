@@ -92,7 +92,8 @@ bool valid_initial_status() noexcept {
         shared->host_pid != config.host_pid || shared->child_pid != config.child_pid ||
         std::memcmp(shared->nonce, config.nonce, sizeof(config.nonce)) != 0 ||
         load(shared->phase) != static_cast<LONG>(Phase::payload_prepared) || load(shared->fatal_error) != 0 ||
-        load(shared->actor_phase) || load(shared->actor_error))
+        load(shared->actor_phase) || load(shared->actor_error) ||
+        load(shared->actor_motion_paused) || load(shared->actor_metrics_padding))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{
@@ -103,7 +104,9 @@ bool valid_initial_status() noexcept {
         &shared->native_denied, &shared->native_passthrough, &shared->native_internal_bypass,
         &shared->native_appdata_redirects, &shared->native_directory_queries, &shared->native_copy_failures,
         &shared->native_destination_may_be_modified, &shared->actor_creation_calls,
-        &shared->actor_ticks, &shared->actor_pose_writes};
+        &shared->actor_ticks, &shared->actor_pose_writes, &shared->actor_creation_attempts,
+        &shared->actor_world_callbacks, &shared->actor_callback_total_us,
+        &shared->actor_callback_max_us, &shared->actor_factory_us, &shared->actor_max_frame_interval_us};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;

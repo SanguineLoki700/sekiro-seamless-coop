@@ -16,6 +16,13 @@ volatile LONG entered{};
 DWORD native_thread{};
 bool armed{};
 ULONGLONG armed_at{};
+bool pause_key_down{};
+std::uint64_t creation_calls{}, world_callbacks{}, callback_total_us{}, callback_max_us{}, factory_us{}, max_interval_us{}, previous_tick{};
+LARGE_INTEGER frequency{};
+std::uint64_t clock_ticks() noexcept { LARGE_INTEGER n{}; QueryPerformanceCounter(&n); return static_cast<std::uint64_t>(n.QuadPart); }
+std::uint64_t microseconds(std::uint64_t ticks) noexcept {
+    return ticks*1000000/static_cast<std::uint64_t>(frequency.QuadPart);
+}
 using Update = void (*)(void*, void*);
 Update original_update{};
 constexpr std::uintptr_t creator_vtable = 0x2a952a8;
@@ -97,8 +104,10 @@ public:
         static_assert(sizeof(Parameters)==48 && offsetof(Parameters,data)==24);
         const Parameters params{frame.field_handle&0x7ff,0,source,0,data,0,{}};
         using Create=void* (*)(void*,std::uint32_t,const void*);
+        const auto start=clock_ticks(); ++creation_calls;
         const auto result=reinterpret_cast<std::uintptr_t>(reinterpret_cast<Create>(base+0xa49460)(
             reinterpret_cast<void*>(world),argument,&params));
+        factory_us=microseconds(clock_ticks()-start);
         const auto guest=pointer(frame.registry+0x38);
         if (!guest || guest!=result || !typed(guest,0x2a2b338) ||
             !typed(pointer(guest+0x58),0x29d2ae0) || pointer(world+0x88)!=p || pointer(frame.registry)!=p)
@@ -120,18 +129,32 @@ NativeGame game;
 void publish() noexcept {
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(demo.phase));
     InterlockedExchange(&status->actor_error,static_cast<LONG>(demo.error));
-    InterlockedExchange64(&status->actor_creation_calls,static_cast<LONG64>(demo.creation_calls));
+    InterlockedExchange64(&status->actor_creation_calls,static_cast<LONG64>(creation_calls));
     InterlockedExchange64(&status->actor_ticks,static_cast<LONG64>(demo.ticks));
     InterlockedExchange64(&status->actor_pose_writes,static_cast<LONG64>(demo.pose_writes));
+    InterlockedExchange(&status->actor_motion_paused,demo.motion_paused?1:0);
+    InterlockedExchange64(&status->actor_creation_attempts,static_cast<LONG64>(demo.creation_calls));
+    InterlockedExchange64(&status->actor_world_callbacks,static_cast<LONG64>(world_callbacks));
+    InterlockedExchange64(&status->actor_callback_total_us,static_cast<LONG64>(callback_total_us));
+    InterlockedExchange64(&status->actor_callback_max_us,static_cast<LONG64>(callback_max_us));
+    InterlockedExchange64(&status->actor_factory_us,static_cast<LONG64>(factory_us));
+    InterlockedExchange64(&status->actor_max_frame_interval_us,static_cast<LONG64>(max_interval_us));
 }
 void step(void* creator) noexcept {
     try {
+        if (demo.phase==Phase::stopped || demo.phase==Phase::failed) return;
+        DWORD foreground_pid{};
+        GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
         if (!armed) {
-            DWORD foreground_pid{};
-            GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
             if (foreground_pid!=GetCurrentProcessId() || !(GetAsyncKeyState(VK_F8)&0x8000)) return;
             armed=true; armed_at=GetTickCount64();
         }
+        if (foreground_pid==GetCurrentProcessId()) {
+            const bool down=(GetAsyncKeyState(VK_F9)&0x8000)!=0;
+            if (down && !pause_key_down) demo.motion_paused=!demo.motion_paused;
+            pause_key_down=down;
+            if (GetAsyncKeyState(VK_F10)&0x8000) { demo.phase=Phase::stopped; return; }
+        } else pause_key_down=false;
         if (!demo.creation_calls && GetTickCount64()-armed_at>10000) { demo.fail(Error::binding); return; }
         game.creator=creator; demo.tick(game);
     }
@@ -144,10 +167,15 @@ void guarded_step(void* creator) noexcept {
 void update(void* creator, void* frame) {
     const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     if (caller==base+0xa50a31 && InterlockedCompareExchange(&entered,1,0)==0) {
+        const auto start=clock_ticks(); ++world_callbacks;
+        if (previous_tick) max_interval_us=std::max(max_interval_us,microseconds(start-previous_tick));
+        previous_tick=start;
         const auto thread=GetCurrentThreadId();
         if (!native_thread) native_thread=thread;
         if (native_thread!=thread) demo.fail(Error::binding);
         else guarded_step(creator);
+        const auto duration=microseconds(clock_ticks()-start);
+        callback_total_us+=duration; callback_max_us=std::max(callback_max_us,duration);
         publish();
         InterlockedExchange(&entered,0);
     }
@@ -175,6 +203,7 @@ bool anchors_match() noexcept {
     return true;
 }
 DWORD WINAPI worker(void*) noexcept {
+    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0) { demo.fail(Error::binding); publish(); return 0; }
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const auto start=GetTickCount64();
     while (!anchors_match()) {

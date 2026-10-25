@@ -6,6 +6,7 @@
 #include "preflight.h"
 #include "owned_job.h"
 #include "skcoop/launch_protocol.h"
+#include <Psapi.h>
 #include "skcoop/save_store.hpp"
 #include <detours.h>
 #include <bcrypt.h>
@@ -288,8 +289,20 @@ std::string counters(const SharedStatus& s) {
         <<",\"copy_failures\":"<<load(s.native_copy_failures)<<",\"destination_may_be_modified\":"<<load(s.native_destination_may_be_modified)<<"}"
         <<",\"actor\":{\"phase\":"<<load(s.actor_phase)<<",\"error\":"<<load(s.actor_error)
         <<",\"creation_calls\":"<<load(s.actor_creation_calls)<<",\"ticks\":"<<load(s.actor_ticks)
-        <<",\"pose_writes\":"<<load(s.actor_pose_writes)<<"}}";
+        <<",\"pose_writes\":"<<load(s.actor_pose_writes)<<",\"motion_paused\":"<<load(s.actor_motion_paused)
+        <<",\"creation_attempts\":"<<load(s.actor_creation_attempts)<<",\"world_callbacks\":"<<load(s.actor_world_callbacks)
+        <<",\"callback_total_us\":"<<load(s.actor_callback_total_us)<<",\"callback_max_us\":"<<load(s.actor_callback_max_us)
+        <<",\"factory_us\":"<<load(s.actor_factory_us)<<",\"max_frame_interval_us\":"<<load(s.actor_max_frame_interval_us)<<"}}";
     return value.str();
+}
+std::string process_metrics(HANDLE process) {
+    FILETIME created{},exited{},kernel{},user{};
+    PROCESS_MEMORY_COUNTERS memory{sizeof(memory)};
+    const auto count=[](FILETIME t) { return (static_cast<std::uint64_t>(t.dwHighDateTime)<<32)|t.dwLowDateTime; };
+    const bool cpu=GetProcessTimes(process,&created,&exited,&kernel,&user)!=FALSE;
+    const bool ram=K32GetProcessMemoryInfo(process,&memory,sizeof(memory))!=FALSE;
+    return "{\"cpu_100ns\":"+(cpu?std::to_string(count(kernel)+count(user)):"null")+
+        ",\"working_set_bytes\":"+(ram?std::to_string(memory.WorkingSetSize):"null")+"}";
 }
 class Child {
 public:
@@ -478,7 +491,8 @@ int run(const Options& options, bool check_only) {
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
             if(options.actor_follow_test && GetTickCount64()-actor_report_at>=1000) {
                 actor_report_at=GetTickCount64();
-                receipt.emit("{\"event\":\"actor_status\",\"child_pid\":"+std::to_string(child.pid)+",\"native\":"+counters(*shared)+"}");
+                receipt.emit("{\"event\":\"actor_status\",\"elapsed_ms\":"+std::to_string(GetTickCount64()-(deadline-maximum_run_ms))+
+                    ",\"child_pid\":"+std::to_string(child.pid)+",\"process\":"+process_metrics(child.process)+",\"native\":"+counters(*shared)+"}");
             }
             if(GetTickCount64()>=deadline){timed_out=true;throw std::runtime_error("Owned child exceeded 30-minute run budget");}
         }

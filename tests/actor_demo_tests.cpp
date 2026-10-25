@@ -41,6 +41,10 @@ int main() {
         { Demo d; Fake g; following(d,g); g.f.milliseconds+=120000; g.tick(d); require(d.phase==Phase::stopped && g.writes==1); }
         { Demo d; Fake g; following(d,g); g.f.milliseconds+=500; g.tick(d); require(d.phase==Phase::stopped && g.writes==1); }
         { Demo d; Fake g; following(d,g); g.tick(d,1000); require(d.phase==Phase::following && g.writes==1); }
+        { Demo d; Fake g; following(d,g); d.motion_paused=true; g.f.position[0]=3;
+          g.tick(d,60); require(g.writes==1 && d.phase==Phase::following);
+          d.motion_paused=false; g.tick(d); require(g.writes==2 && g.guest[0]>.09f && g.guest[0]<.097f);
+          d.motion_paused=true; ++g.f.world; g.tick(d); require(d.phase==Phase::stopped); }
         std::cout<<"PASS local actor failure, scene lifetime, bounded movement and no-retry scenarios\n";
     } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }
