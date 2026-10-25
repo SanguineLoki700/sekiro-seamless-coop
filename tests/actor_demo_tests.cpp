@@ -1,4 +1,5 @@
 #include "actor_demo.h"
+#include "locomotion_input.h"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -10,16 +11,24 @@ struct Fake final : Game {
     Vector guest{};
     bool available=true, ready=true, factory_fails=false;
     unsigned calls{}, writes{};
+    unsigned locomotion_commands{};
+    bool locomotion_active{};
     bool sample(Frame& out) override { out=f; return available; }
     Token create() override { ++calls; if (factory_fails) return 0; f.guest=4; return 4; }
     bool actor_ready(Token p) override { require(p==4); return ready; }
     Vector position(Token p) override { require(p==4); return guest; }
     void place(Token p,const Vector& v) override { require(p==4); guest=v; ++writes; }
+    void command_locomotion(Token p,bool enabled) override { require(p==4); ++locomotion_commands; locomotion_active=enabled; }
     void tick(Demo& d,unsigned n=1) { while(n--) { f.milliseconds+=16; d.tick(*this); } }
 };
 void following(Demo& d,Fake& g) { g.tick(d,62); require(d.phase==Phase::following && g.calls==1 && g.writes==1); }
 int main() {
     try {
+        { LocomotionInput input; require(valid_locomotion_input(input));
+          input.direction={.7f,0,.7f,0}; input.rotation_target={0,3.14f,0,0}; require(valid_locomotion_input(input));
+          input.direction_copy[3]=1; require(!valid_locomotion_input(input)); input.direction_copy[3]=0;
+          input.direction[0]=2; require(!valid_locomotion_input(input)); input.direction[0]=0;
+          input.rotation_delta[1]=std::numeric_limits<float>::quiet_NaN(); require(!valid_locomotion_input(input)); }
         { Demo d; Fake g; g.available=false; g.tick(d,100); require(g.calls==0); g.available=true; following(d,g);
           const auto before=g.guest; g.f.position[0]=3; g.tick(d); require(g.guest[0]>before[0] && g.guest[0]<=.0961f);
           const auto n=g.writes; g.tick(d,40); require(g.writes>n && g.calls==1); }
@@ -45,6 +54,14 @@ int main() {
           g.tick(d,60); require(g.writes==1 && d.phase==Phase::following);
           d.motion_paused=false; g.tick(d); require(g.writes==2 && g.guest[0]>.09f && g.guest[0]<.097f);
           d.motion_paused=true; ++g.f.world; g.tick(d); require(d.phase==Phase::stopped); }
+        { Demo d; Fake g; d.native_locomotion=true; following(d,g);
+          g.tick(d,10); require(g.locomotion_active && g.writes==1 && g.locomotion_commands==10);
+          d.motion_paused=true; g.tick(d); require(!g.locomotion_active && g.writes==1);
+          d.motion_paused=false; g.tick(d); require(g.locomotion_active);
+          d.stop_requested=true; g.tick(d); require(!g.locomotion_active && d.phase==Phase::stopped);
+          const auto n=g.locomotion_commands; g.tick(d,10); require(g.locomotion_commands==n); }
+        { Demo d; Fake g; d.native_locomotion=true; following(d,g); g.tick(d);
+          g.f.milliseconds+=500; g.tick(d); require(!g.locomotion_active && d.phase==Phase::stopped); }
         std::cout<<"PASS local actor failure, scene lifetime, bounded movement and no-retry scenarios\n";
     } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

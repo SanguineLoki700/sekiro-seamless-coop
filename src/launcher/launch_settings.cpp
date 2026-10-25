@@ -117,8 +117,9 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
         if (bit == 16) {
-            if (value != L"off" && value != L"follow") invalid("actor_test must be off or follow.");
-            result.actor_follow_test = value == L"follow";
+            if (value != L"off" && value != L"follow" && value != L"locomotion") invalid("actor_test must be off, follow or locomotion.");
+            result.actor_follow_test = value != L"off";
+            result.actor_locomotion_test = value == L"locomotion";
         } else if (bit == 4) {
             if (!valid_account(value)) invalid("Account must be a positive canonical decimal uint64.");
             result.account = value;

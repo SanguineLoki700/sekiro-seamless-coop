@@ -6,7 +6,7 @@ namespace skcoop::actors {
 using Token = std::uintptr_t;
 using Vector = std::array<float, 4>;
 enum class Phase : long { off, waiting, placing, settling, following, stopped, failed };
-enum class Error : long { none, binding, changed_world, factory, model_timeout, invalid_pose, native_fault, hook_timeout, hook_conflict };
+enum class Error : long { none, binding, changed_world, factory, model_timeout, invalid_pose, native_fault, hook_timeout, hook_conflict, input_owner, input_range, input_value };
 struct Frame {
     Token world{}, primary{}, registry{}, guest{};
     std::uint32_t field_handle{};
@@ -23,8 +23,10 @@ public:
     virtual bool actor_ready(Token) = 0;
     virtual Vector position(Token) = 0;
     virtual void place(Token, const Vector&) = 0;
+    virtual void command_locomotion(Token, bool) = 0;
 };
-// Local transform-follow experiment, not network replication or locomotion input.
+// Explicit local transform-follow or native locomotion-input experiment.
+// Neither mode receives input from a network peer.
 // At most one creation attempt. Never retries across loads, failures or expiry.
 class Demo {
 public:
@@ -33,6 +35,7 @@ public:
     Phase phase{Phase::waiting};
     Error error{};
     bool motion_paused{};
+    bool native_locomotion{}, stop_requested{};
     std::uint64_t creation_calls{}, ticks{}, pose_writes{};
 private:
     Frame original_{};

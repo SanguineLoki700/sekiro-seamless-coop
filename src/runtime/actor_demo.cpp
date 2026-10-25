@@ -15,6 +15,7 @@ float distance(const Vector& a, const Vector& b) {
 }
 void Demo::tick(Game& game) {
     if (phase == Phase::stopped || phase == Phase::failed) return;
+    if (stop_requested && !creation_calls) { phase=Phase::stopped; return; }
     ++ticks;
     Frame f{};
     if (!game.sample(f) || !f.primary_ready) {
@@ -45,6 +46,10 @@ void Demo::tick(Game& game) {
         f.registry != original_.registry || f.field_handle != original_.field_handle || f.guest != actor_) {
         phase = Phase::stopped; error = Error::changed_world; return;
     }
+    if (stop_requested) {
+        if (native_locomotion) game.command_locomotion(actor_,false);
+        phase=Phase::stopped; return;
+    }
     if (phase == Phase::placing) {
         if (!game.actor_ready(actor_)) {
             if (ticks - created_tick_ >= 120) fail(Error::model_timeout);
@@ -64,7 +69,13 @@ void Demo::tick(Game& game) {
         return;
     }
     if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= 120000 || f.milliseconds - last_ms_ > 250) {
+        if (native_locomotion) game.command_locomotion(actor_,false);
         phase = Phase::stopped; return;
+    }
+    if (native_locomotion) {
+        last_ms_=f.milliseconds;
+        game.command_locomotion(actor_,!motion_paused);
+        return;
     }
     if (motion_paused) { last_ms_ = f.milliseconds; return; }
     Vector target = f.position;

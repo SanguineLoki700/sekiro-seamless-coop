@@ -1,6 +1,7 @@
 #include "actor_native.h"
 #include "actor_demo.h"
 #include "region_queries.h"
+#include "locomotion_input.h"
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
@@ -19,8 +20,10 @@ bool armed{};
 ULONGLONG armed_at{};
 bool pause_key_down{};
 std::uint64_t creation_calls{}, world_callbacks{}, callback_total_us{}, callback_max_us{}, factory_us{}, max_interval_us{}, previous_tick{};
+std::uint64_t locomotion_writes{},zero_commands{};
 LARGE_INTEGER frequency{};
 RegionQueries regions;
+struct InputFailure { Error error; };
 std::uint64_t clock_ticks() noexcept { LARGE_INTEGER n{}; QueryPerformanceCounter(&n); return static_cast<std::uint64_t>(n.QuadPart); }
 std::uint64_t microseconds(std::uint64_t ticks) noexcept {
     return ticks*1000000/static_cast<std::uint64_t>(frequency.QuadPart);
@@ -128,6 +131,36 @@ public:
         using Setter=void (*)(void*,const float*);
         reinterpret_cast<Setter>(base+0x9f6320)(reinterpret_cast<void*>(p),aligned.data());
     }
+    void command_locomotion(Token actor,bool enabled) override {
+        // Derived from retained native PadManipulator 7f1710, corroborated by
+        // base reset 7e3510. Only the owned additional base manipulator is written.
+        const auto primary=frame.primary;
+        if(actor==primary || pointer(frame.world+0x88)!=primary || pointer(frame.registry+0x38)!=actor ||
+            !typed(actor,0x2a2b338))throw std::runtime_error("Locomotion actor links changed");
+        const auto destination=pointer(actor+0x58), source=pointer(primary+0x58);
+        if(destination==source || !typed(destination,0x29d2ae0) || !typed(source,0x29d4b30) ||
+            pointer(destination+0x300)!=actor || pointer(source+0x300)!=primary)
+            throw InputFailure{Error::input_owner};
+        const std::uintptr_t fields[]{0x10,0x20,0x40,0xc0};
+        for(const auto offset:fields) {
+            MEMORY_BASIC_INFORMATION m{};
+            if(!readable(destination+offset,16) || !regions.query(destination+offset,m) ||
+                ((m.Protect&0xff)!=PAGE_READWRITE && (m.Protect&0xff)!=PAGE_WRITECOPY))
+                throw InputFailure{Error::input_range};
+        }
+        const Vector zero{};
+        // Release prior movement first, including if source validation then fails.
+        for(const auto offset:{0x10u,0x20u,0xc0u})
+            std::memcpy(reinterpret_cast<void*>(destination+offset),zero.data(),16);
+        if(!enabled) { ++zero_commands; return; }
+        const LocomotionInput input{read<Vector>(source+0x10),read<Vector>(source+0x20),
+            read<Vector>(source+0x40),read<Vector>(source+0xc0)};
+        if(!valid_locomotion_input(input))throw InputFailure{Error::input_value};
+        const Vector* values[]{&input.direction,&input.rotation_delta,&input.rotation_target,&input.direction_copy};
+        for(std::size_t i=0;i<std::size(fields);++i)
+            std::memcpy(reinterpret_cast<void*>(destination+fields[i]),values[i]->data(),16);
+        ++locomotion_writes;
+    }
 };
 NativeGame game;
 void publish() noexcept {
@@ -143,6 +176,8 @@ void publish() noexcept {
     InterlockedExchange64(&status->actor_callback_max_us,static_cast<LONG64>(callback_max_us));
     InterlockedExchange64(&status->actor_factory_us,static_cast<LONG64>(factory_us));
     InterlockedExchange64(&status->actor_max_frame_interval_us,static_cast<LONG64>(max_interval_us));
+    InterlockedExchange64(&status->actor_locomotion_writes,static_cast<LONG64>(locomotion_writes));
+    InterlockedExchange64(&status->actor_zero_commands,static_cast<LONG64>(zero_commands));
 }
 void step(void* creator) noexcept {
     try {
@@ -157,11 +192,12 @@ void step(void* creator) noexcept {
             const bool down=(GetAsyncKeyState(VK_F9)&0x8000)!=0;
             if (down && !pause_key_down) demo.motion_paused=!demo.motion_paused;
             pause_key_down=down;
-            if (GetAsyncKeyState(VK_F10)&0x8000) { demo.phase=Phase::stopped; return; }
+            if (GetAsyncKeyState(VK_F10)&0x8000) demo.stop_requested=true;
         } else pause_key_down=false;
         if (!demo.creation_calls && GetTickCount64()-armed_at>10000) { demo.fail(Error::binding); return; }
         game.creator=creator; demo.tick(game);
     }
+    catch (const InputFailure& e) { demo.fail(e.error); }
     catch (...) { demo.fail(Error::binding); }
 }
 void guarded_step(void* creator) noexcept {
@@ -242,9 +278,10 @@ DWORD WINAPI worker(void*) noexcept {
     return 0;
 }
 } // namespace
-bool start_native_demo(launch::SharedStatus* shared) noexcept {
+bool start_native_demo(launch::SharedStatus* shared,bool locomotion) noexcept {
     if (status || !shared) return false;
     status=shared;
+    demo.native_locomotion=locomotion;
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(Phase::waiting));
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
     if (!thread) { status=nullptr; return false; }
