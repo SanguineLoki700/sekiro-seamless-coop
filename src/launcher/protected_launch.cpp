@@ -1,5 +1,6 @@
 // Explicit protected integration launch; this is not multiplayer gameplay.
 #include "protected_launch.h"
+#include "receipt_budget.h"
 #include "launch_settings.h"
 #include "steam_install.h"
 #include "process.h"
@@ -233,13 +234,17 @@ public:
         require(equal(final_path(handle.get()),path.wstring()),"Receipt canonical identity changed");
     }
     void emit(const std::string& json) {
-        require(json.size()<16384&&bytes+json.size()+1<128*1024,"Receipt size bound exceeded");
+        require(budget.permits(json.size()),"Receipt size bound exceeded");
         const auto line=json+"\n";DWORD count{};
         require(WriteFile(handle.get(),line.data(),static_cast<DWORD>(line.size()),&count,nullptr)&&count==line.size()&&FlushFileBuffers(handle.get()),
-            "Cannot persist local launch receipt");bytes+=line.size();std::cout<<line<<std::flush;
+            "Cannot persist local launch receipt");budget.committed(json.size());std::cout<<line<<std::flush;
+    }
+    bool sample(const std::string& json) {
+        if(!budget.permits(json.size(),true))return false;
+        emit(json);return true;
     }
     fs::path path;
-private:Handle handle;std::size_t bytes{};
+private:Handle handle;ReceiptBudget budget;
 };
 std::vector<wchar_t> environment() {
     auto* raw=GetEnvironmentStringsW();require(raw!=nullptr,"Cannot copy child environment");
@@ -424,7 +429,7 @@ int run(const Options& options, bool check_only) {
     std::array<std::uint8_t,16> nonce{};
     require(BCryptGenRandom(nullptr,nonce.data(),static_cast<ULONG>(nonce.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0,"Cannot generate handshake nonce");
     Receipt receipt(output,nonce);
-    receipt.emit("{\"event\":\"prepared\",\"protocol\":1,\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
+    receipt.emit("{\"event\":\"prepared\",\"protocol\":"+std::to_string(protocol_version)+",\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
         ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+quote(hex(primary.digest))+",\"solo_backup_before\":"+quote(hex(backup.digest))+
         ",\"solo_handles_share_mode\":0,\"original_saves_created\":false}");
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(SharedStatus),nullptr));
@@ -483,16 +488,18 @@ int run(const Options& options, bool check_only) {
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
         ULONGLONG actor_report_at{};
+        bool actor_samples_full{};
         for(;;) {
             wait_foreign_close(receipt,child.pid,foreign_detected,monitor_error);
             if(foreign_detected)throw std::runtime_error("A foreign/Steam-relaunched Sekiro was observed; lifecycle is unverified");
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
-            if(options.actor_follow_test && GetTickCount64()-actor_report_at>=1000) {
+            if(options.actor_follow_test && !actor_samples_full && GetTickCount64()-actor_report_at>=1000) {
                 actor_report_at=GetTickCount64();
-                receipt.emit("{\"event\":\"actor_status\",\"elapsed_ms\":"+std::to_string(GetTickCount64()-(deadline-maximum_run_ms))+
+                actor_samples_full=!receipt.sample("{\"event\":\"actor_status\",\"elapsed_ms\":"+std::to_string(GetTickCount64()-(deadline-maximum_run_ms))+
                     ",\"child_pid\":"+std::to_string(child.pid)+",\"process\":"+process_metrics(child.process)+",\"native\":"+counters(*shared)+"}");
+                if(actor_samples_full)receipt.emit("{\"event\":\"actor_sampling_limit\",\"game_kept_running\":true,\"final_receipt_reserved\":true}");
             }
             if(GetTickCount64()>=deadline){timed_out=true;throw std::runtime_error("Owned child exceeded 30-minute run budget");}
         }

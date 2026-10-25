@@ -1,5 +1,6 @@
 #include "actor_native.h"
 #include "actor_demo.h"
+#include "region_queries.h"
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
@@ -19,6 +20,7 @@ ULONGLONG armed_at{};
 bool pause_key_down{};
 std::uint64_t creation_calls{}, world_callbacks{}, callback_total_us{}, callback_max_us{}, factory_us{}, max_interval_us{}, previous_tick{};
 LARGE_INTEGER frequency{};
+RegionQueries regions;
 std::uint64_t clock_ticks() noexcept { LARGE_INTEGER n{}; QueryPerformanceCounter(&n); return static_cast<std::uint64_t>(n.QuadPart); }
 std::uint64_t microseconds(std::uint64_t ticks) noexcept {
     return ticks*1000000/static_cast<std::uint64_t>(frequency.QuadPart);
@@ -31,7 +33,7 @@ constexpr std::uintptr_t consumer = 0xc0f7a0;
 bool readable(std::uintptr_t p, std::size_t n, bool executable=false) noexcept {
     if (!p || !n || p+n < p) return false;
     MEMORY_BASIC_INFORMATION m{};
-    if (VirtualQuery(reinterpret_cast<void*>(p), &m, sizeof(m)) != sizeof(m) ||
+    if (!regions.query(p,m) ||
         m.State != MEM_COMMIT || (m.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
         p+n > reinterpret_cast<std::uintptr_t>(m.BaseAddress)+m.RegionSize) return false;
     const DWORD access=m.Protect & 0xff;
@@ -104,10 +106,12 @@ public:
         static_assert(sizeof(Parameters)==48 && offsetof(Parameters,data)==24);
         const Parameters params{frame.field_handle&0x7ff,0,source,0,data,0,{}};
         using Create=void* (*)(void*,std::uint32_t,const void*);
+        regions.clear(); // The factory can allocate/remap native objects.
         const auto start=clock_ticks(); ++creation_calls;
         const auto result=reinterpret_cast<std::uintptr_t>(reinterpret_cast<Create>(base+0xa49460)(
             reinterpret_cast<void*>(world),argument,&params));
         factory_us=microseconds(clock_ticks()-start);
+        regions.clear();
         const auto guest=pointer(frame.registry+0x38);
         if (!guest || guest!=result || !typed(guest,0x2a2b338) ||
             !typed(pointer(guest+0x58),0x29d2ae0) || pointer(world+0x88)!=p || pointer(frame.registry)!=p)
@@ -173,7 +177,7 @@ void update(void* creator, void* frame) {
         const auto thread=GetCurrentThreadId();
         if (!native_thread) native_thread=thread;
         if (native_thread!=thread) demo.fail(Error::binding);
-        else guarded_step(creator);
+        else { regions.begin(); guarded_step(creator); regions.end(); }
         const auto duration=microseconds(clock_ticks()-start);
         callback_total_us+=duration; callback_max_us=std::max(callback_max_us,duration);
         publish();

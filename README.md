@@ -8,6 +8,8 @@ Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com
 
 **Marco atual: segundo personagem criado e acompanhando o jogador pela DLL C++.** No [teste protegido](docs/validation/native-follow-2026-10-25.md), o participante confirmou o acompanhamento, ainda sem animações, e relatou queda de desempenho. A saída terminou com código0 e os saves originais permaneceram intactos. Medir/corrigir o desempenho, integrar animações e validar ciclo de vida e controle entre máquinas continuam pendentes. O [lançador protegido](docs/LAUNCHER.md), a [compatibilidade do runtime](docs/validation/native-runtime-2026-10-23.md) e os saves estão aceitos. A abertura por dois cliques e o pacote final continuam pendentes. Veja as [etapas](docs/ROADMAP.md#etapas-de-execução).
 
+A [medição seguinte](docs/validation/native-follow-metrics-2026-10-25.md) encontrou custo elevado nas atualizações e uma falha no limite da coleta que encerrava o teste. Há correções com testes independentes; a repetição no jogo e as animações ainda estão pendentes. Nenhum desses experimentos representa multiplayer entre máquinas.
+
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
 ## Progresso verificável
