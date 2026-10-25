@@ -1,11 +1,13 @@
 // Explicit protected integration launch; this is not multiplayer gameplay.
 #include "protected_launch.h"
+#include "receipt_budget.h"
 #include "launch_settings.h"
 #include "steam_install.h"
 #include "process.h"
 #include "preflight.h"
 #include "owned_job.h"
 #include "skcoop/launch_protocol.h"
+#include <Psapi.h>
 #include "skcoop/save_store.hpp"
 #include <detours.h>
 #include <bcrypt.h>
@@ -185,7 +187,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{};};
 Options options_from(const fs::path& config) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -198,6 +200,10 @@ Options options_from(const fs::path& config) {
     result.coop_root=normalized(settings.coop_profile_root);
     require(result.coop_root.wstring().size()<MAX_PATH,"Cooperative roaming root exceeds the native AppData API bound");
     result.output=normalized(settings.receipt_directory);result.account=settings.account;
+    result.actor_follow_test=settings.actor_follow_test;
+    result.actor_locomotion_test=settings.actor_locomotion_test;
+    result.actor_pad_reference_test=settings.actor_pad_reference_test;
+    result.actor_graph_locomotion_test=settings.actor_graph_locomotion_test;
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -231,13 +237,17 @@ public:
         require(equal(final_path(handle.get()),path.wstring()),"Receipt canonical identity changed");
     }
     void emit(const std::string& json) {
-        require(json.size()<16384&&bytes+json.size()+1<128*1024,"Receipt size bound exceeded");
+        require(budget.permits(json.size()),"Receipt size bound exceeded");
         const auto line=json+"\n";DWORD count{};
         require(WriteFile(handle.get(),line.data(),static_cast<DWORD>(line.size()),&count,nullptr)&&count==line.size()&&FlushFileBuffers(handle.get()),
-            "Cannot persist local launch receipt");bytes+=line.size();std::cout<<line<<std::flush;
+            "Cannot persist local launch receipt");budget.committed(json.size());std::cout<<line<<std::flush;
+    }
+    bool sample(const std::string& json) {
+        if(!budget.permits(json.size(),true))return false;
+        emit(json);return true;
     }
     fs::path path;
-private:Handle handle;std::size_t bytes{};
+private:Handle handle;ReceiptBudget budget;
 };
 std::vector<wchar_t> environment() {
     auto* raw=GetEnvironmentStringsW();require(raw!=nullptr,"Cannot copy child environment");
@@ -284,8 +294,29 @@ std::string counters(const SharedStatus& s) {
         <<",\"process_detach_count\":"<<load(s.process_detach_count)<<",\"native_aggregate\":{\"redirected\":"<<load(s.native_redirected)
         <<",\"denied\":"<<load(s.native_denied)<<",\"passthrough\":"<<load(s.native_passthrough)<<",\"internal_bypass\":"<<load(s.native_internal_bypass)
         <<",\"appdata_redirects\":"<<load(s.native_appdata_redirects)<<",\"directory_queries\":"<<load(s.native_directory_queries)
-        <<",\"copy_failures\":"<<load(s.native_copy_failures)<<",\"destination_may_be_modified\":"<<load(s.native_destination_may_be_modified)<<"}}";
+        <<",\"copy_failures\":"<<load(s.native_copy_failures)<<",\"destination_may_be_modified\":"<<load(s.native_destination_may_be_modified)<<"}"
+        <<",\"actor\":{\"phase\":"<<load(s.actor_phase)<<",\"error\":"<<load(s.actor_error)
+        <<",\"creation_calls\":"<<load(s.actor_creation_calls)<<",\"ticks\":"<<load(s.actor_ticks)
+        <<",\"pose_writes\":"<<load(s.actor_pose_writes)<<",\"motion_paused\":"<<load(s.actor_motion_paused)
+        <<",\"creation_attempts\":"<<load(s.actor_creation_attempts)<<",\"world_callbacks\":"<<load(s.actor_world_callbacks)
+        <<",\"callback_total_us\":"<<load(s.actor_callback_total_us)<<",\"callback_max_us\":"<<load(s.actor_callback_max_us)
+        <<",\"factory_us\":"<<load(s.actor_factory_us)<<",\"max_frame_interval_us\":"<<load(s.actor_max_frame_interval_us)
+        <<",\"locomotion_writes\":"<<load(s.actor_locomotion_writes)<<",\"zero_commands\":"<<load(s.actor_zero_commands)
+        <<",\"controller_callbacks\":"<<load(s.actor_controller_callbacks)<<",\"controller_context_errors\":"<<load(s.actor_controller_context_errors)
+        <<",\"source_captures\":"<<load(s.actor_source_captures)<<",\"source_nonzero\":"<<load(s.actor_source_nonzero)
+        <<",\"action_finalizes\":"<<load(s.actor_action_finalizes)<<",\"invalid_deltas\":"<<load(s.actor_invalid_deltas)
+        <<",\"observed_displacement_mm\":"<<load(s.actor_observed_displacement_mm)
+        <<",\"graph_writes\":"<<load(s.actor_graph_writes)<<",\"graph_nonzero\":"<<load(s.actor_graph_nonzero)<<"}}";
     return value.str();
+}
+std::string process_metrics(HANDLE process) {
+    FILETIME created{},exited{},kernel{},user{};
+    PROCESS_MEMORY_COUNTERS memory{sizeof(memory)};
+    const auto count=[](FILETIME t) { return (static_cast<std::uint64_t>(t.dwHighDateTime)<<32)|t.dwLowDateTime; };
+    const bool cpu=GetProcessTimes(process,&created,&exited,&kernel,&user)!=FALSE;
+    const bool ram=K32GetProcessMemoryInfo(process,&memory,sizeof(memory))!=FALSE;
+    return "{\"cpu_100ns\":"+(cpu?std::to_string(count(kernel)+count(user)):"null")+
+        ",\"working_set_bytes\":"+(ram?std::to_string(memory.WorkingSetSize):"null")+"}";
 }
 class Child {
 public:
@@ -407,7 +438,7 @@ int run(const Options& options, bool check_only) {
     std::array<std::uint8_t,16> nonce{};
     require(BCryptGenRandom(nullptr,nonce.data(),static_cast<ULONG>(nonce.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0,"Cannot generate handshake nonce");
     Receipt receipt(output,nonce);
-    receipt.emit("{\"event\":\"prepared\",\"protocol\":1,\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
+    receipt.emit("{\"event\":\"prepared\",\"protocol\":"+std::to_string(protocol_version)+",\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
         ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+quote(hex(primary.digest))+",\"solo_backup_before\":"+quote(hex(backup.digest))+
         ",\"solo_handles_share_mode\":0,\"original_saves_created\":false}");
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(SharedStatus),nullptr));
@@ -448,6 +479,9 @@ int run(const Options& options, bool check_only) {
         }
         shared->child_pid=child.pid;
         Payload payload{};payload.struct_size=sizeof(payload);payload.version=protocol_version;payload.host_pid=GetCurrentProcessId();payload.child_pid=child.pid;
+        payload.actor_test=options.actor_graph_locomotion_test?ActorTest::graph_locomotion:
+            (options.actor_pad_reference_test?ActorTest::pad_reference:
+            (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off)));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);
@@ -464,12 +498,20 @@ int run(const Options& options, bool check_only) {
             "READY signal did not contain a matching successful bootstrap receipt");
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
+        ULONGLONG actor_report_at{};
+        bool actor_samples_full{};
         for(;;) {
             wait_foreign_close(receipt,child.pid,foreign_detected,monitor_error);
             if(foreign_detected)throw std::runtime_error("A foreign/Steam-relaunched Sekiro was observed; lifecycle is unverified");
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
+            if(options.actor_follow_test && !actor_samples_full && GetTickCount64()-actor_report_at>=1000) {
+                actor_report_at=GetTickCount64();
+                actor_samples_full=!receipt.sample("{\"event\":\"actor_status\",\"elapsed_ms\":"+std::to_string(GetTickCount64()-(deadline-maximum_run_ms))+
+                    ",\"child_pid\":"+std::to_string(child.pid)+",\"process\":"+process_metrics(child.process)+",\"native\":"+counters(*shared)+"}");
+                if(actor_samples_full)receipt.emit("{\"event\":\"actor_sampling_limit\",\"game_kept_running\":true,\"final_receipt_reserved\":true}");
+            }
             if(GetTickCount64()>=deadline){timed_out=true;throw std::runtime_error("Owned child exceeded 30-minute run budget");}
         }
         require(GetExitCodeProcess(child.process,&exit_code)!=FALSE,"Cannot obtain child exit status");

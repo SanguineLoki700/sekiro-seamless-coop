@@ -6,7 +6,9 @@ Projeto comunitário para criar coop contínua de até **quatro jogadores** em *
 
 Repositório público: [SanguineLoki700/sekiro-seamless-coop](https://github.com/SanguineLoki700/sekiro-seamless-coop).
 
-**Marco atual: primeiro personagem adicional real e visível.** O [teste local](docs/validation/local-player-2026-10-24.md) criou um segundo `PlayerIns` em outro registro; o participante confirmou a aparência na tela e continuou controlando o personagem original. O protótipo ainda precisa ser integrado ao runtime C++, receber controle de movimento e passar pelos testes de ciclo de vida e entre máquinas. O [lançador protegido](docs/LAUNCHER.md), a [compatibilidade do runtime](docs/validation/native-runtime-2026-10-23.md) e os saves estão aceitos. A abertura por dois cliques e o pacote final continuam pendentes. Veja as [etapas](docs/ROADMAP.md#etapas-de-execução).
+**Marco atual: caminhada, giro e parada com animação confirmados no segundo personagem pela DLL C++.** O [teste de animação](docs/validation/local-animation-2026-10-25.md) registrou10,24 unidades de deslocamento, sem reposicionamento contínuo, com confirmação do participante, saída normal e saves originais preservados. O [lançador protegido](docs/LAUNCHER.md), a [compatibilidade do runtime](docs/validation/native-runtime-2026-10-23.md) e os saves estão aceitos. Controle entre máquinas, ciclo de vida completo, abertura por dois cliques e pacote final continuam pendentes. Veja as [etapas](docs/ROADMAP.md#etapas-de-execução).
+
+A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md) encontrou custo elevado nas atualizações e uma falha no limite da coleta que encerrava o teste. Há correções; a avaliação de desempenho continua pendente. Nenhum desses experimentos representa multiplayer entre máquinas.
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 

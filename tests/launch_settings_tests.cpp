@@ -191,6 +191,16 @@ void reader_is_bounded_read_only_and_handles_unicode_path() {
 } // namespace
 
 int main() {
+    require(!parse_launch_settings(ini()).actor_follow_test, "Actor test must default to off.");
+    require(parse_launch_settings(ini()+"actor_test=follow\n").actor_follow_test, "Explicit actor test missing.");
+    require(parse_launch_settings(ini()+"actor_test=locomotion\n").actor_locomotion_test, "Explicit locomotion test missing.");
+    const auto pad=parse_launch_settings(ini()+"actor_test=pad-reference\n");
+    require(pad.actor_pad_reference_test && pad.actor_follow_test && !pad.actor_locomotion_test, "Native pad reference must be explicit and separate.");
+    const auto graph=parse_launch_settings(ini()+"actor_test=graph-locomotion\n");
+    require(graph.actor_graph_locomotion_test && graph.actor_follow_test && !graph.actor_locomotion_test && !graph.actor_pad_reference_test, "Native graph test must be explicit and separate.");
+    require(!parse_launch_settings(ini()+"actor_test=off\n").actor_follow_test, "Explicit off changed.");
+    invalid([&] { (void)parse_launch_settings(ini()+"actor_test=true\n"); });
+    invalid([&] { (void)parse_launch_settings(ini()+"actor_test=follow\nactor_test=off\n"); });
     const std::array<std::pair<std::string_view, std::function<void()>>, 11> tests{{
         {"valid_values_are_preserved", valid_values_are_preserved},
         {"unicode_bom_crlf_comments_and_whitespace", unicode_bom_crlf_comments_and_whitespace},

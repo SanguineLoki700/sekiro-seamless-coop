@@ -12,7 +12,8 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=1;
+inline constexpr std::uint32_t protocol_version=8;
+enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
 
@@ -33,6 +34,8 @@ struct Payload {
     wchar_t account[account_units];
     HANDLE mapping_handle;
     HANDLE ready_event;
+    ActorTest actor_test;
+    std::uint32_t actor_padding;
     std::uint64_t reserved[4];
 };
 
@@ -67,6 +70,30 @@ struct alignas(8) SharedStatus {
     volatile LONG64 native_directory_queries;
     volatile LONG64 native_copy_failures;
     volatile LONG64 native_destination_may_be_modified;
+    volatile LONG actor_phase;
+    volatile LONG actor_error;
+    volatile LONG64 actor_creation_calls;
+    volatile LONG64 actor_ticks;
+    volatile LONG64 actor_pose_writes;
+    volatile LONG actor_motion_paused;
+    volatile LONG actor_metrics_padding;
+    volatile LONG64 actor_creation_attempts;
+    volatile LONG64 actor_world_callbacks;
+    volatile LONG64 actor_callback_total_us;
+    volatile LONG64 actor_callback_max_us;
+    volatile LONG64 actor_factory_us;
+    volatile LONG64 actor_max_frame_interval_us;
+    volatile LONG64 actor_locomotion_writes;
+    volatile LONG64 actor_zero_commands;
+    volatile LONG64 actor_controller_callbacks;
+    volatile LONG64 actor_controller_context_errors;
+    volatile LONG64 actor_source_captures;
+    volatile LONG64 actor_source_nonzero;
+    volatile LONG64 actor_action_finalizes;
+    volatile LONG64 actor_invalid_deltas;
+    volatile LONG64 actor_observed_displacement_mm;
+    volatile LONG64 actor_graph_writes;
+    volatile LONG64 actor_graph_nonzero;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);
