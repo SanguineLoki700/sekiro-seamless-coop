@@ -38,6 +38,9 @@ class MotionBuffer {
 public:
  PushResult push(const Motion&,std::uint64_t arrival,std::uint64_t sequence);
  std::optional<Smoothed> sample(std::uint64_t now)const;
+ // Diagnostics can preserve the exact pose/history pair instead of feeding
+ // interpolated state back into another receiver.
+ std::optional<MotionSample> newest()const noexcept {return count_?std::optional{samples_[count_-1]}:std::nullopt;}
 private:
  std::array<MotionSample,8> samples_{};std::size_t count_{};
 };

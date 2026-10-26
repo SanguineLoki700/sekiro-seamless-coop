@@ -79,6 +79,17 @@ registros brutos e saves permanecem privados.
 3. Atualizar o notebook e verificar cada ação nos dois sentidos, além de pausa,
    parada e saída. Recolher recibos e preservação dos saves dos dois clientes.
 
+Sem notebook, a fixture de desenvolvimento `--mirror-actions` pode receber os
+comandos capturados e devolvê-los como um parceiro simulado autenticado no
+próprio PC. Usa um ponto observado e espera o participante se afastar entre
+1,25 e 6 metros; conserva essa separação ao espelhar um trajeto de até 6 metros,
+durante no máximo 90 segundos. Exige o par original de pose/histórico, recusa
+troca de época ou descritor e deixa dados vencidos soltarem os comandos.
+O participante deve ficar em um trecho plano e seguro. Essa fixture não é
+incluída no pacote público. O teste confere a captura/aplicação C++ e a aparência
+do ator: as correções de posição, inclusive altura, continuam presentes, então
+não comprova sozinho física independente, navegação nem dois jogadores reais.
+
 O assistente mantém Criar/Entrar, descoberta LAN e perfis existentes por conta.
 Não exige códigos nem novas opções da Steam. Ataques, dano, IA, chefes, campanha,
 reconexão e convites Steam ainda não pertencem a este teste.
