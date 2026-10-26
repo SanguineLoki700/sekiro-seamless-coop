@@ -1,8 +1,9 @@
 # Captura e reprodução de ações em um PC — 2026-10-26
 
-**O participante confirmou que o segundo personagem acompanhou, correu e
-pulou.** A DLL registrou captura e enfileiramento de corrida, salto e esquiva
-no ator adicional, sem erro registrado. A esquiva não teve confirmação visual.
+**O participante confirmou acompanhamento, corrida, salto e esquiva do segundo
+personagem em duas rodadas locais.** A DLL registrou captura e enfileiramento
+dessas ações no ator adicional, sem erro registrado. A segunda rodada confirmou
+a esquiva, que não havia sido vista na primeira.
 Esta é uma prova parcial com um jogo e um parceiro simulado no mesmo PC;
 o progresso funcional permanece **10%**.
 
@@ -29,7 +30,7 @@ participante autenticado no transporte local. O personagem adicional usou o
 caminho C++ da DLL, sem script Frida nesta sessão. O auxiliar não faz parte do
 pacote público e não representa outro cliente humano ou outro jogo real.
 
-## Resultados registrados
+## Primeira rodada
 
 | Observação | Resultado |
 |---|---|
@@ -64,16 +65,42 @@ afundamento no chão. Esse relato não é classificado como defeito de
 posicionamento. Também não constitui uma avaliação geral de colisões ou
 navegação.
 
+## Segunda rodada: esquiva confirmada
+
+O participante reutilizou a mesma versão e o assistente, com um novo processo
+do jogo e uma nova conexão do auxiliar. A instrução foi observar duas esquivas
+laterais em um trecho plano, mantendo o segundo personagem visível. O
+participante confirmou o resultado e depois confirmou fechar pelo menu.
+
+| Observação | Resultado |
+|---|---|
+| Ator adicional | Uma criação, sem erro registrado |
+| Eventos | 25 capturados, 23 enfileirados, 2 descartados |
+| Esquiva | 3 comandos capturados e 3 enfileirados; confirmação visual do participante |
+| Salto | 2 inícios capturados e 2 enfileirados |
+| Corrida | 1 início capturado e 1 enfileirado |
+| Transporte do jogo | 334 frames enviados, 235 recebidos, zero rejeitados, 2 frames vencidos registrados |
+| Liberação de comandos | 2 registradas; estado final sem corrida retida |
+| Erros | Ator, ações, transporte e sistema iguais a zero |
+| Encerramento | Código 0, recibo final completo, sem timeout ou jogo externo observado |
+| Save pessoal e backup | Preservados no recibo e em nova comparação independente após encerrar |
+| Configuração gráfica | Preservada segundo o recibo |
+
+O auxiliar desta rodada também registrou `completed=false`; a confirmação
+visual específica não transforma o cenário integral de 90 segundos em aprovado.
+O jogo, o auxiliar e o observador de teste já estavam encerrados ao concluir a
+verificação. O assistente foi mantido aberto para o participante.
+
 ## Alcance e pendências
 
 Este teste exercitou os novos hooks C++, a captura do jogador original, o
 transporte autenticado local e o enfileiramento no grafo pertencente ao ator
-adicional. A confirmação visual de corrida e salto aproveita o resultado
+adicional. A confirmação visual de corrida, salto e esquiva aproveita o resultado
 obtido, sem exigir repetir a preparação anterior.
 
 As correções contínuas de posição, inclusive altura, permaneceram presentes.
 O salto visto aqui não comprova física independente do ator. Não foram
-confirmados visualmente a esquiva, o pouso como transição específica, os casos
+confirmados visualmente o pouso como transição específica, os casos
 de pausa/retomada nem a transmissão dessas ações entre dois jogos reais.
 Desempenho sustentado, terreno, colisões e perda de rede não receberam aceitação
 quantitativa nesta sessão.
@@ -85,6 +112,6 @@ movimentação continuam em andamento, sem pontos novos. Combate, dano, IA,
 campanha, reconexão e convites Steam continuam fora deste incremento.
 
 Recibos brutos, contas, credenciais, endereços, caminhos pessoais e saves
-permanecem privados. O próximo teste visual específico é a esquiva em um
-trecho plano; a validação com dois jogos fica para quando o notebook estiver
-disponível novamente.
+permanecem privados. Pouso como transição específica e pausa/retomada ainda
+precisam de verificação; a validação com dois jogos fica para quando o notebook
+estiver disponível novamente.

@@ -6,9 +6,9 @@ dois jogos reais. O movimento LAN anterior já teve caminhada, giro e parada
 confirmados pelo participante nos dois computadores. O progresso permanece 10%.
 
 Na integração C++, o [teste local de 2026-10-26](validation/local-actions-2026-10-26.md)
-já teve corrida e salto confirmados visualmente no segundo personagem, com
-encerramento normal e saves pessoais preservados no PC. A esquiva teve comando
-capturado e enfileirado, sem confirmação visual. Foi um jogo com parceiro
+já teve corrida, salto e esquiva confirmados visualmente no segundo personagem,
+com encerramento normal e saves pessoais preservados nas duas rodadas do PC.
+Foi um jogo com parceiro
 simulado; os dois jogos reais ainda precisam ser testados.
 
 ## Caminho implementado
@@ -81,8 +81,8 @@ registros brutos e saves permanecem privados.
 
 1. Captura C++ de corrida, salto e esquiva no PC: observada com contagens por
    ação, sem erro e com saída normal; resultado registrado no relatório local.
-2. Corrida e salto visuais do ator adicional: confirmados no teste local.
-   Esquiva visual e pouso como transição específica continuam pendentes; uma
+2. Corrida, salto e esquiva visuais do ator adicional: confirmados no teste local.
+   Pouso como transição específica e pausa/retomada continuam pendentes; uma
    fixture de desenvolvimento continua sendo apenas um jogo real.
 3. Atualizar o notebook e verificar cada ação nos dois sentidos, além de pausa,
    parada e saída. Recolher recibos e preservação dos saves dos dois clientes.
