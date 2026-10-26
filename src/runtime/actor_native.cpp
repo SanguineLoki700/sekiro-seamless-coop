@@ -8,6 +8,10 @@
 #include "vtable_slot.h"
 #include "controller_update_abi.h"
 #include "graph_variable_abi.h"
+#include "action_receiver.h"
+#include "action_native_contract.h"
+#include <detours.h>
+#include <TlHelp32.h>
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
@@ -48,7 +52,10 @@ bool captured_valid{};
 bool graph_locomotion{};
 std::uint64_t graph_writes{},graph_nonzero{};
 LARGE_INTEGER frequency{};
-RegionQueries regions;
+thread_local RegionQueries regions;
+bool actions_mode{};
+SRWLOCK action_ingress=SRWLOCK_INIT;
+bool action_consumer_active{}; // protected by action_ingress
 struct InputFailure { Error error; };
 std::uint64_t clock_ticks() noexcept { LARGE_INTEGER n{}; QueryPerformanceCounter(&n); return static_cast<std::uint64_t>(n.QuadPart); }
 std::uint64_t microseconds(std::uint64_t ticks) noexcept {
@@ -335,6 +342,7 @@ public:
     }
 };
 NativeGame game;
+#include "action_native.inc"
 void publish() noexcept {
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(lan_mode?remote_actor.phase:demo.phase));
     InterlockedExchange(&status->actor_error,static_cast<LONG>(lan_mode?remote_actor.error:demo.error));
@@ -366,15 +374,16 @@ void publish() noexcept {
 }
 void lan_step(void* creator) {
     network->try_read(network_view);
-    if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed){network->request_stop();return;}
+    if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed){if(actions_mode)guarded_retire_actions();network->request_stop();return;}
     DWORD foreground{};GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
     if(foreground==GetCurrentProcessId()){
-        if(GetAsyncKeyState(VK_F8)&0x8000)armed=true;
+        if(!armed&&(GetAsyncKeyState(VK_F8)&0x8000)){armed=true;armed_at=GetTickCount64();}
         const bool down=(GetAsyncKeyState(VK_F9)&0x8000)!=0;
         if(down&&!pause_key_down)remote_actor.paused=!remote_actor.paused;pause_key_down=down;
         if(GetAsyncKeyState(VK_F10)&0x8000)remote_actor.stop_requested=true;
     }else pause_key_down=false;
     if(!armed){
+        if(actions_mode)receive_actions({},false);
         if(remote_actor.stop_requested){remote_actor.phase=Phase::stopped;network->request_stop();}
         return; // No player/graph reads during the title screen or new-game scenes.
     }
@@ -382,9 +391,20 @@ void lan_step(void* creator) {
     if(ready&&armed){
         if(!local_loaded){local_loaded=true;source_world=frame.world;source_primary=frame.primary;source_registry=frame.registry;}
         else if(source_world!=frame.world||source_primary!=frame.primary||source_registry!=frame.registry){remote_actor.fail(Error::changed_world);network->request_stop();return;}
-        if(GetTickCount64()-offered_at>=50){if(network->try_offer(game.local_motion()))offered_at=GetTickCount64();}
+        if(actions_mode)cache_action_source(frame);
+        if(GetTickCount64()-offered_at>=50){
+            auto motion=game.local_motion();
+            if(actions_mode&&!capture_snapshot(motion.actions))return;
+            if(network->try_offer(motion)){
+                offered_at=GetTickCount64();
+                if(actions_mode)capture_offered(motion.actions.latest);
+            }
+        }
     }else if(!ready&&local_loaded){remote_actor.phase=Phase::stopped;remote_actor.error=Error::changed_world;network->request_stop();return;}
-    remote_actor.tick(game,frame,ready,armed,network_view.status.state,network_view.remote.sample(GetTickCount64()));
+    const auto incoming=network_view.remote.sample(GetTickCount64());
+    remote_actor.tick(game,frame,ready,armed,network_view.status.state,incoming);
+    if(actions_mode)receive_actions(frame,ready&&remote_actor.phase==Phase::following&&
+        !remote_actor.paused&&incoming&&incoming->fresh&&network_view.status.state==lan::State::connected);
     if(remote_actor.phase==Phase::stopped||remote_actor.phase==Phase::failed)network->request_stop();
 }
 void step(void* creator) noexcept {
@@ -407,12 +427,16 @@ void step(void* creator) noexcept {
         game.creator=creator; demo.tick(game);
         if(demo.phase==Phase::stopped || demo.phase==Phase::failed)game.disarm();
     }
-    catch (const InputFailure& e) { fail_demo(e.error); game.disarm(); }
-    catch (...) { fail_demo(Error::binding); game.disarm(); }
+    catch (const InputFailure& e) { if(actions_mode)guarded_retire_actions();fail_demo(e.error); game.disarm(); }
+    catch (...) { if(actions_mode)guarded_retire_actions();fail_demo(Error::binding); game.disarm(); }
 }
 void guarded_step(void* creator) noexcept {
+    // The worker discards pre-spawn/menu history under this same gate. Switching
+    // to an active receiver and its fresh baseline is one atomic hand-off.
+    if(actions_mode&&!TryAcquireSRWLockExclusive(&action_ingress))return;
     __try { step(creator); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { fail_demo(Error::native_fault); game.disarm(); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { if(actions_mode)guarded_retire_actions();fail_demo(Error::native_fault); game.disarm(); }
+    if(actions_mode)ReleaseSRWLockExclusive(&action_ingress);
 }
 void controller_step(void* controller,float delta,void* component) noexcept {
     try {
@@ -507,6 +531,16 @@ bool anchor_matches(const Anchor& a) noexcept {
         if (a.digest[i*2]!=hex[digest[i]>>4] || a.digest[i*2+1]!=hex[digest[i]&15]) return false;
     return true;
 }
+bool action_anchors_match() noexcept {
+    constexpr Anchor bindings[]{
+        {0x13f92c0,"ff27b642d6a61268a58266e0fcd6945bbf18553ddf27641e2403b86c77cc3ac8"},
+        {0x13fbfc0,"089af5e2538783f6c13673b6ca55fe43e31f9bb12619ada01f47d7dc042c77ef"},
+        {0xff1d10,"aa54c6f0f5ceb800c466ca7e686382fe17e0ece4ba3aadf97d868e3fc63b19cd"},
+        {0xaebeb0,"0fdd63ed1a29f88a19d3d9c0c335efb328d9520aa8b29a2f642dbda075e25e95"}
+    };
+    for(const auto& binding:bindings)if(!anchor_matches(binding))return false;
+    return true;
+}
 bool anchors_match() noexcept {
     for (const auto& a:anchors) {
         if((!demo.native_locomotion || graph_locomotion) && (a.rva==0x7e3de0 || a.rva==0xb2bf40 || a.rva==0xb2c190 || a.rva==0x7ef120))continue;
@@ -514,6 +548,7 @@ bool anchors_match() noexcept {
     }
     if(demo.native_pad_reference)for(const auto& a:pad_reference_anchors)if(!anchor_matches(a))return false;
     if(graph_locomotion)for(const auto& a:graph_anchors)if(!anchor_matches(a))return false;
+    if(actions_mode&&!action_anchors_match())return false;
     return true;
 }
 DWORD WINAPI worker(void*) noexcept {
@@ -537,7 +572,11 @@ DWORD WINAPI worker(void*) noexcept {
     original_update=reinterpret_cast<Update>(base+consumer);
     // Prevent callback work until page protection and hook ownership are settled.
     InterlockedExchange(&entered,1);
+    if(actions_mode&&!install_action_hooks()){
+        fail_demo(Error::hook_conflict);publish();InterlockedExchange(&entered,0);return 0;
+    }
     if(!exchange_vtable_slot(slot,reinterpret_cast<void*>(original_update),reinterpret_cast<void*>(&update))) {
+        if(actions_mode)install_action_hooks(true);
         fail_demo(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
     }
     if(demo.native_locomotion && !graph_locomotion) {
@@ -556,11 +595,21 @@ DWORD WINAPI worker(void*) noexcept {
         }
     }
     InterlockedOr64(&status->hooks_mask,(demo.native_locomotion && !graph_locomotion)?14:2);
+    if(actions_mode)InterlockedOr64(&status->hooks_mask,16);
     InterlockedExchange(&entered,0);
     if(lan_mode){
         // Publish socket readiness even while the title screen has no world
         // callbacks. This lets the notebook discover the room before loading.
         for(;;){const auto view=network->read();const auto& n=view.status;
+            if(actions_mode){
+                if(n.action_fault!=lan::ActionFault::none)action_fault(n.action_fault);
+                AcquireSRWLockExclusive(&action_ingress);
+                if(!action_consumer_active){
+                    const auto idle=network->read();
+                    if(idle.actions.latest())network->try_ack_actions(idle.actions.latest()->packet_sequence);
+                }
+                ReleaseSRWLockExclusive(&action_ingress);
+            }
             InterlockedExchange(&status->lan_state,static_cast<LONG>(n.state));
             InterlockedExchange(&status->lan_error,static_cast<LONG>(n.failure));
             InterlockedExchange(&status->lan_system_error,static_cast<LONG>(n.system_error));
@@ -581,6 +630,7 @@ bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode,const
     lan_mode=mode==launch::ActorTest::lan;
     if(lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
     status=shared;
+    actions_mode=lan_mode&&lan_launch.lan_profile==1;
     graph_locomotion=mode==launch::ActorTest::graph_locomotion||lan_mode;
     demo.native_locomotion=mode==launch::ActorTest::locomotion || graph_locomotion;
     demo.native_pad_reference=mode==launch::ActorTest::pad_reference;

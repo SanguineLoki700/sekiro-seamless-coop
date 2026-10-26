@@ -11,7 +11,14 @@ namespace skcoop::launcher {
 int check_protected_launch(const std::filesystem::path& config);
 int steam_protected_launch(const std::filesystem::path& config,
                            std::wstring_view original_command);
-struct LaunchStatus { bool ready{},finished{},completed{};std::uint32_t pid{},hooks{},actor_phase{},actor_error{},network{},network_error{},waiting{};std::uint64_t sent{},received{};bool paused{}; };
+struct LaunchStatus {
+    bool ready{},finished{},completed{};
+    std::uint32_t pid{},hooks{},actor_phase{},actor_error{},network{},network_error{},waiting{};
+    std::uint64_t sent{},received{};
+    bool paused{};
+    std::uint32_t action_error{};
+    std::uint64_t actions_captured{},actions_replayed{};
+};
 using LaunchObserver=std::function<void(const LaunchStatus&)>;
 int direct_protected_launch(const std::filesystem::path& config,const std::filesystem::path& runtime_directory={},const LaunchObserver& observer={});
 std::filesystem::path prepare_direct_lan(const std::filesystem::path& internal_directory,std::uint32_t role,std::string_view code);

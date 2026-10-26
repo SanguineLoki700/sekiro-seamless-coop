@@ -15,6 +15,8 @@ A atualizacao nao inclui nem substitui perfis ou saves criados anteriormente.
 6. Quando puder controlar os dois personagens no mesmo local seguro, ande
    alguns passos em um dos computadores e pressione F8 nos dois jogos.
    Cada jogo deve mostrar o movimento do outro jogador. O teste dura 2 minutos.
+   Neste incremento experimental, teste tambem corrida, salto e esquiva,
+   uma acao de cada vez; depois troque quem faz e quem observa.
 7. F9 pausa a representacao remota; F10 encerra o movimento remoto.
 8. Feche o Sekiro pelo menu e depois feche o assistente.
 
@@ -33,7 +35,8 @@ Jogar da Steam para abrir o jogo normal. Nao precisa inserir uma linha nova.
 
 Este prototipo ainda nao sincroniza ataques, dano, inimigos, viagens, campanha,
 reconexao ou convites Steam. Nao use descanso/viagem/troca de area neste teste.
-O percentual funcional permanece 10%; dois jogos reais ainda precisam de prova.
+O percentual funcional permanece 10%. Caminhada, giro e parada ja tiveram
+confirmacao nos dois jogos; as novas acoes ainda precisam de verificacao.
 
 Nao redistribua a pasta depois de usa-la: ela passa a conter perfis e registros
 privados. Para o outro computador use somente o ZIP original publicado.

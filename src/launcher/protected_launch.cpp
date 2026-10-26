@@ -331,7 +331,13 @@ std::string counters(const SharedStatus& s) {
         <<",\"graph_writes\":"<<load(s.actor_graph_writes)<<",\"graph_nonzero\":"<<load(s.actor_graph_nonzero)
         <<"},\"lan\":{\"state\":"<<load(s.lan_state)<<",\"error\":"<<load(s.lan_error)<<",\"system_error\":"<<load(s.lan_system_error)
         <<",\"wait\":"<<load(s.lan_wait)<<",\"frames_sent\":"<<load(s.lan_frames_sent)<<",\"frames_received\":"<<load(s.lan_frames_received)
-        <<",\"rejected\":"<<load(s.lan_rejected)<<",\"stale_frames\":"<<load(s.lan_stale_frames)<<"}}";
+        <<",\"rejected\":"<<load(s.lan_rejected)<<",\"stale_frames\":"<<load(s.lan_stale_frames)
+        <<"},\"actions\":{\"error\":"<<load(s.action_error)<<",\"sprinting\":"<<load(s.action_sprinting)
+        <<",\"captured\":"<<load(s.action_captured)<<",\"replayed\":"<<load(s.action_replayed)
+        <<",\"discarded\":"<<load(s.action_discarded)<<",\"released\":"<<load(s.action_released)
+        <<",\"ignored_sources\":"<<load(s.action_ignored_sources)<<",\"unsupported_source\":"<<load(s.action_unsupported_source)
+        <<",\"jump_captured\":"<<load(s.action_jump_captured)<<",\"step_captured\":"<<load(s.action_step_captured)<<",\"sprint_captured\":"<<load(s.action_sprint_captured)
+        <<",\"jump_replayed\":"<<load(s.action_jump_replayed)<<",\"step_replayed\":"<<load(s.action_step_replayed)<<",\"sprint_replayed\":"<<load(s.action_sprint_replayed)<<"}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
@@ -374,7 +380,8 @@ void wait_foreign_close(Receipt& receipt,DWORD own_pid,bool& detected,bool& moni
 LaunchStatus launch_snapshot(const SharedStatus& s,bool finished=false,bool completed=false) {
     return {load(s.phase)==static_cast<LONG>(Phase::ready),finished,completed,s.child_pid,static_cast<std::uint32_t>(load(s.hooks_mask)),
         static_cast<std::uint32_t>(load(s.actor_phase)),static_cast<std::uint32_t>(load(s.actor_error)),static_cast<std::uint32_t>(load(s.lan_state)),
-        static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0};
+        static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0,
+        static_cast<std::uint32_t>(load(s.action_error)),static_cast<std::uint64_t>(load(s.action_captured)),static_cast<std::uint64_t>(load(s.action_replayed))};
 }
 int run(const Options& options, bool check_only,const LaunchObserver& observer={}) {
     require(!another_game(),"Close all existing Sekiro processes before starting this isolated harness");
@@ -533,7 +540,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
         if(observer)observer(launch_snapshot(*shared));
-        ULONGLONG actor_report_at{};std::array<LONG,7> previous_signal{};
+        ULONGLONG actor_report_at{};std::array<LONG,8> previous_signal{};
         bool actor_samples_full{};
         for(;;) {
             require(primary.expected_state()&&backup.expected_state(),"An originally absent personal save appeared outside the isolated profile; the test was stopped without deleting it");
@@ -543,7 +550,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
             if(observer)observer(launch_snapshot(*shared));
-            const std::array<LONG,7> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error)};
+            const std::array<LONG,8> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error),load(shared->action_error)};
             if(options.actor_follow_test && !actor_samples_full && (GetTickCount64()-actor_report_at>=(options.independent_profile?30000u:1000u)||signal!=previous_signal)) {
                 previous_signal=signal;
                 actor_report_at=GetTickCount64();

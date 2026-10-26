@@ -5,6 +5,11 @@ enum class Role { host,guest };
 enum class State { starting,listening,connecting,handshaking,connected,lost,failed,stopped };
 enum class Failure { none,socket,authentication,protocol,compatibility,timeout,scene,internal };
 struct SessionConfig { Role role{};Ticket ticket;Build build;std::uint64_t participant{}; };
+struct ReceivedMotion {
+ Motion motion;
+ ActionScope scope; // Derived only from the accepted authenticated envelope.
+ std::uint64_t packet_sequence{},arrival_ms{};
+};
 class Session {
 public:
  explicit Session(SessionConfig);
@@ -18,11 +23,12 @@ public:
  std::uint64_t peer()const noexcept{return peer_;}
  std::uint64_t ignored()const noexcept{return ignored_;}
  std::optional<Motion> take_remote();
+ std::optional<ReceivedMotion> take_remote_frame();
 private:
  enum class Stage { closed,challenge,hello,welcome,ack,ready,active };
  SessionConfig config_;Stage stage_{Stage::closed};State state_{State::starting};Failure failure_{};
  Id connection_{};std::uint64_t peer_{},sequence_{},received_{},started_{},last_receive_{},ignored_{};
- std::vector<Packet> outgoing_;std::optional<Motion> remote_;
+ std::vector<Packet> outgoing_;std::optional<ReceivedMotion> remote_;
  void send(Kind);bool reject(Failure);
 };
 struct MotionSample { Motion motion;std::uint64_t time{},sequence{}; };

@@ -38,21 +38,20 @@ bool Session::receive(const Packet& p,std::uint64_t now){
  if(stage_!=Stage::active)return reject(Failure::protocol);
  if(p.kind==Kind::bye){state_=State::lost;remote_.reset();return true;}
  if(p.kind==Kind::heartbeat)return true;
- if(p.kind!=Kind::frame||!valid(p.motion))return reject(Failure::protocol);
- if((config_.build.purpose==Purpose::connection_check&&p.motion.descriptor!=0)||
-    (config_.build.purpose==Purpose::native_avatar&&p.motion.descriptor!=0xa000))return reject(Failure::protocol);
- remote_=p.motion;return true;
+ if(p.kind!=Kind::frame||!valid(config_.build,p.motion))return reject(Failure::protocol);
+ remote_=ReceivedMotion{p.motion,{p.room,p.connection,p.sender,p.motion.epoch},p.sequence,now};return true;
 }
 void Session::tick(std::uint64_t now){
  if(state_!=State::handshaking&&state_!=State::connected)return;
  const auto since=state_==State::connected?last_receive_:started_;
  if(now<since||now-since>(state_==State::connected?2000u:15000u)){state_=State::lost;failure_=Failure::timeout;remote_.reset();outgoing_.clear();}
 }
-void Session::send_frame(const Motion& m){if(state_!=State::connected)return;if(!valid(m))throw std::invalid_argument("Invalid local motion");send(Kind::frame);if(state_==State::connected)outgoing_.back().motion=m;}
+void Session::send_frame(const Motion& m){if(state_!=State::connected)return;if(!valid(config_.build,m))throw std::invalid_argument("Invalid local motion for negotiated adapter");send(Kind::frame);if(state_==State::connected)outgoing_.back().motion=m;}
 void Session::heartbeat(){if(state_==State::connected)send(Kind::heartbeat);}
 void Session::stop(){outgoing_.clear();remote_.reset();state_=State::stopped;}
 std::vector<Packet> Session::take_outgoing(){auto out=std::move(outgoing_);outgoing_.clear();return out;}
-std::optional<Motion> Session::take_remote(){auto r=remote_;remote_.reset();return r;}
+std::optional<Motion> Session::take_remote(){const auto frame=take_remote_frame();if(frame)return frame->motion;return {};}
+std::optional<ReceivedMotion> Session::take_remote_frame(){auto r=remote_;remote_.reset();return r;}
 PushResult MotionBuffer::push(const Motion& m,std::uint64_t now,std::uint64_t sequence){
  if(!valid(m)||!sequence)return PushResult::invalid;
  if(count_){const auto& last=samples_[count_-1];if(sequence<=last.sequence||now<last.time)return PushResult::stale;
@@ -73,6 +72,7 @@ std::optional<Smoothed> MotionBuffer::sample(std::uint64_t now)const{
  }
  for(auto& r:out.rotation)r=std::remainder(r,2*std::numbers::pi_v<float>);
  out.angle=std::remainder(out.angle,360.f);if(age>500)out.speed=0;
+ out.actions={}; // Discrete history is consumed only through authenticated ActionFrameBuffer.
  return Smoothed{out,age,age<=500};
 }
 }

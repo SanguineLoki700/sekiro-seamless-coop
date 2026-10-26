@@ -21,7 +21,7 @@ std::mutex state_mutex;skcoop::launcher::LaunchStatus launch_state;std::wstring 
 std::wstring wide(std::string_view s){return skcoop::launcher::diagnostic_wide(s);}
 fs::path directory(){std::wstring s(32768,0);const auto n=GetModuleFileNameW(nullptr,s.data(),static_cast<DWORD>(s.size()));if(!n||n==s.size())throw std::runtime_error("Pasta do programa indisponivel");s.resize(n);return fs::path(s).parent_path();}
 void report(const fs::path& path,const Status& s,bool success){
- std::ostringstream out;out<<"{\"kind\":\"lan-connection-check\",\"wire_protocol\":1,\"native_game_test\":false,\"passed\":"<<(success?"true":"false")<<",\"state\":"<<static_cast<int>(s.state)<<",\"error\":"<<static_cast<int>(s.failure)<<",\"frames_sent\":"<<s.frames_sent<<",\"frames_received\":"<<s.frames_received<<",\"rejected\":"<<s.rejected<<"}\n";
+ std::ostringstream out;out<<"{\"kind\":\"lan-connection-check\",\"wire_protocol\":"<<version<<",\"native_game_test\":false,\"passed\":"<<(success?"true":"false")<<",\"state\":"<<static_cast<int>(s.state)<<",\"error\":"<<static_cast<int>(s.failure)<<",\"frames_sent\":"<<s.frames_sent<<",\"frames_received\":"<<s.frames_received<<",\"rejected\":"<<s.rejected<<"}\n";
  const auto value=out.str();HANDLE h=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(h==INVALID_HANDLE_VALUE)throw std::runtime_error("Cannot create new report");DWORD n{};const bool ok=WriteFile(h,value.data(),static_cast<DWORD>(value.size()),&n,nullptr)&&n==value.size()&&FlushFileBuffers(h);CloseHandle(h);if(!ok)throw std::runtime_error("Cannot finish report");
 }
 int headless(const fs::path& path,const fs::path& output){
@@ -59,22 +59,23 @@ void update(){
  }
  skcoop::launcher::LaunchStatus state;{std::lock_guard lock(state_mutex);state=launch_state;}
  if(!state.ready)return;
- if(role==1&&!advertiser&&state.network==static_cast<unsigned>(State::listening)&&(state.hooks&3)==3)advertiser=std::make_unique<Discovery>(active_ticket);
+ if(role==1&&!advertiser&&state.network==static_cast<unsigned>(State::listening)&&(state.hooks&19)==19)advertiser=std::make_unique<Discovery>(active_ticket);
  if(advertiser&&state.network!=static_cast<unsigned>(State::listening))advertiser.reset();
  std::wstring label=L"Sekiro aberto com o perfil de teste desta conta.\r\nNa primeira vez escolha Novo Jogo; nas proximas, Continuar.";
  if(state.network_error==4)label+=L"\r\nVersoes incompativeis. Atualize o pacote nos dois computadores.";
- else if(state.actor_error||state.network_error)label+=L"\r\nO teste de movimento foi interrompido. Feche o jogo pelo menu para repetir.";
+ else if(state.actor_error||state.network_error||state.action_error)label+=L"\r\nO teste de movimento foi interrompido. Feche o jogo pelo menu para repetir.";
  else if(state.actor_phase==5||state.network>=static_cast<unsigned>(State::lost))label+=L"\r\nO teste terminou ou o parceiro saiu. Feche pelo menu e abra novamente para repetir.";
  else if(state.network==static_cast<unsigned>(State::listening))label+=L"\r\nAguardando o notebook. Nele, selecione este PC e clique em Entrar.";
  else if(state.network==static_cast<unsigned>(State::connected)){
   if(state.waiting==3)label+=L"\r\nAnde alguns passos em um computador para separar os dois jogadores.";
   else if(state.waiting==4)label+=L"\r\nFiquem no mesmo local seguro e perto um do outro.";
-  else if(state.actor_phase==4)label+=state.paused?L"\r\nRepresentacao remota pausada. F9 retoma.":L"\r\nMovimento remoto ativo.";
+  else if(state.actor_phase==4)label+=state.paused?L"\r\nRepresentacao remota pausada. F9 retoma.":L"\r\nMovimento remoto ativo. Corrida, salto e esquiva estao em teste.";
   else if(state.actor_phase==2||state.actor_phase==3)label+=L"\r\nPreparando o personagem do parceiro...";
   else label+=L"\r\nConectados. No mesmo local seguro, pressione F8 nos dois jogos.";
  }else label+=L"\r\nCarregando a conexao...";
  if(advertiser&&advertiser->read().error)label+=L"\r\nNao foi possivel anunciar a sala. Confira se outro lancador esta aberto.";
- std::wostringstream text;text<<label<<L"\r\nMovimentos enviados: "<<state.sent<<L"    recebidos: "<<state.received;SetWindowTextW(status_box,text.str().c_str());
+ std::wostringstream text;text<<label<<L"\r\nMovimentos enviados: "<<state.sent<<L"    recebidos: "<<state.received
+  <<L"\r\nAcoes locais registradas: "<<state.actions_captured<<L"    do parceiro aplicadas: "<<state.actions_replayed;SetWindowTextW(status_box,text.str().c_str());
 }
 HWND control(const wchar_t* kind,const wchar_t* label,DWORD style,int x,int y,int w,int h,int id=0){auto c=CreateWindowExW(0,kind,label,WS_CHILD|WS_VISIBLE|style,x,y,w,h,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);return c;}
 LRESULT CALLBACK procedure(HWND h,UINT message,WPARAM w,LPARAM l){try{switch(message){

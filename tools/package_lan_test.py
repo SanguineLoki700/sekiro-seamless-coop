@@ -10,6 +10,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 def package(binary_dir: Path, output: Path) -> None:
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip():
+        raise RuntimeError("Commit reviewed source before recording package provenance")
     entries = {
         "SekiroCoopTeste.exe": binary_dir / "skcoop_lan_check.exe",
         "SeamlessCoop/skcoop_launcher.exe": binary_dir / "skcoop_launcher.exe",
@@ -20,13 +22,15 @@ def package(binary_dir: Path, output: Path) -> None:
     }
     contents = {name: path.read_bytes() for name, path in entries.items()}
     manifest = {
-        "kind": "owner-lan-movement-prototype",
+        "kind": "owner-lan-actions-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 10,
-        "native_motion_adapter": 2,
+        "launch_protocol": 11,
+        "native_motion_adapter": 3,
         "automatic_lan_discovery": True,
         "save_mode": "independent-per-steam-account",
-        "lan_protocol": 1,
+        "lan_protocol": 2,
+        "experimental_actions": ["sprint", "jump", "dodge"],
+        "native_two_game_action_acceptance": False,
         "game": "Sekiro Steam build 5794815 / 1.06",
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "files": {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()},

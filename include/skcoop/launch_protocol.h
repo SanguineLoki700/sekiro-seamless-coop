@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=10;
+inline constexpr std::uint32_t protocol_version=11;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -106,11 +106,22 @@ struct alignas(8) SharedStatus {
     volatile LONG64 lan_frames_received;
     volatile LONG64 lan_rejected;
     volatile LONG64 lan_stale_frames;
+    volatile LONG action_error;
+    volatile LONG action_sprinting;
+    volatile LONG64 action_captured;
+    volatile LONG64 action_replayed;
+    volatile LONG64 action_discarded;
+    volatile LONG64 action_released;
+    volatile LONG64 action_ignored_sources;
+    volatile LONG64 action_unsupported_source;
+    volatile LONG64 action_jump_captured,action_step_captured,action_sprint_captured;
+    volatile LONG64 action_jump_replayed,action_step_replayed,action_sprint_replayed;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);
 static_assert(std::is_standard_layout_v<Payload> && std::is_trivially_copyable_v<Payload>);
 static_assert(std::is_standard_layout_v<SharedStatus> && std::is_trivially_copyable_v<SharedStatus>);
 static_assert(offsetof(SharedStatus,hooks_mask)%8==0);
+static_assert(offsetof(SharedStatus,action_captured)%8==0 && offsetof(SharedStatus,action_unsupported_source)%8==0);
 static_assert(sizeof(Payload)<65536);
 } // namespace skcoop::launch

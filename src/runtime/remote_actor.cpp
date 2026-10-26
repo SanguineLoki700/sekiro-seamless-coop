@@ -7,6 +7,10 @@ Vector position(const lan::Motion& m){return {m.position[0],m.position[1],m.posi
 float distance(const Vector& a,const Vector& b){return std::hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);}
 }
 void RemoteActor::stop(RemoteGame& game,bool release){if(release){lan::Motion zero;game.remote_motion(actor_,zero);++commands;}phase=Phase::stopped;}
+Token RemoteActor::owned_actor(const Frame& f)const noexcept{
+ return creation_calls&&actor_&&f.primary_ready&&f.world==original_.world&&f.primary==original_.primary&&
+  f.registry==original_.registry&&f.field_handle==original_.field_handle&&f.guest==actor_?actor_:0;
+}
 void RemoteActor::tick(RemoteGame& game,const Frame& f,bool local_ready,bool armed,lan::State network,const std::optional<lan::Smoothed>& incoming){
  if(phase==Phase::failed||phase==Phase::stopped)return;++ticks;
  if(!local_ready){waiting=RemoteWait::local;if(creation_calls){phase=Phase::stopped;error=Error::changed_world;}return;}

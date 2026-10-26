@@ -33,12 +33,18 @@ std::string hex(std::span<const std::uint8_t> a){constexpr char h[]="0123456789a
 template<std::size_t N>bool unhex(std::string_view s,std::array<std::uint8_t,N>& out){if(s.size()!=N*2)return false;for(std::size_t i=0;i<N;++i){unsigned v{};const auto r=std::from_chars(s.data()+i*2,s.data()+i*2+2,v,16);if(r.ec!=std::errc{}||r.ptr!=s.data()+i*2+2)return false;out[i]=static_cast<std::uint8_t>(v);}return true;}
 template<std::size_t N>std::array<std::uint8_t,N> random(){std::array<std::uint8_t,N> a{};do{if(BCryptGenRandom(nullptr,a.data(),static_cast<ULONG>(N),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0)throw std::runtime_error("LAN random source failed");}while(!nonzero(a));return a;}
 }
-bool valid(const Build& b)noexcept{return (b.purpose==Purpose::connection_check&&b.adapter==1&&!nonzero(b.game)&&!nonzero(b.scenario))||(b.purpose==Purpose::native_avatar&&(b.adapter==1||b.adapter==2)&&nonzero(b.game)&&nonzero(b.scenario));}
+bool valid(const Build& b)noexcept{return (b.purpose==Purpose::connection_check&&b.adapter==1&&!nonzero(b.game)&&!nonzero(b.scenario))||(b.purpose==Purpose::native_avatar&&(b.adapter==1||b.adapter==2||b.adapter==action_adapter)&&nonzero(b.game)&&nonzero(b.scenario));}
 bool valid(const Motion& m)noexcept{
  if(!m.epoch||!std::isfinite(m.speed)||m.speed<0||m.speed>1||!std::isfinite(m.angle)||std::abs(m.angle)>360)return false;
  for(float f:m.position)if(!std::isfinite(f)||std::abs(f)>=1e7f)return false;
  for(float f:m.rotation)if(!std::isfinite(f)||std::abs(f)>6.4f)return false;
- return true;
+ return m.actions==ActionSnapshot{}||(valid(m.actions)&&m.actions.epoch==m.epoch);
+}
+bool valid(const Build& b,const Motion& m)noexcept{
+ if(!valid(b)||!valid(m))return false;
+ if(b.purpose==Purpose::connection_check)return m.descriptor==0&&m.actions==ActionSnapshot{};
+ if(m.descriptor!=0xa000)return false;
+ return b.adapter==action_adapter?valid(m.actions)&&m.actions.epoch==m.epoch:m.actions==ActionSnapshot{};
 }
 bool valid_ipv4(std::string_view s)noexcept{
  unsigned first{};for(unsigned i=0;i<4;++i){const auto dot=s.find('.');const auto part=s.substr(0,dot);if(part.empty()||part.size()>3||(part.size()>1&&part[0]=='0'))return false;unsigned n{};const auto r=std::from_chars(part.data(),part.data()+part.size(),n);if(r.ec!=std::errc{}||r.ptr!=part.data()+part.size()||n>255)return false;if(i==0)first=n;
@@ -57,10 +63,16 @@ std::optional<Ticket> parse_ticket(std::string_view s){
 }
 std::vector<std::uint8_t> encode(const Packet& p,const Key& key){
  static_assert(sizeof(float)==4&&std::numeric_limits<float>::is_iec559);
+ static_assert(header_bytes+tag_bytes+motion_body_bytes<=max_packet_bytes);
  if(!good_kind(p.kind)||!nonzero(p.room)||!nonzero(p.connection)||!nonzero(key)||!p.sender||!p.sequence||
     ((p.kind==Kind::challenge)?p.receiver!=0:p.receiver==0))throw std::invalid_argument("Invalid LAN envelope");
  Bytes body;if(build_kind(p.kind)){if(!valid(p.build))throw std::invalid_argument("Invalid LAN identity");body.put(static_cast<std::uint8_t>(p.build.purpose));body.put(std::uint8_t{});body.put(std::uint16_t{});body.put(p.build.adapter);body.put(p.build.game);body.put(p.build.scenario);}
- else if(p.kind==Kind::frame){if(!valid(p.motion))throw std::invalid_argument("Invalid LAN motion");body.put(p.motion.epoch);body.put(p.motion.descriptor);body.put(std::uint32_t{});for(float f:p.motion.position)body.real(f);for(float f:p.motion.rotation)body.real(f);body.real(p.motion.speed);body.real(p.motion.angle);}
+ else if(p.kind==Kind::frame){
+  if(!valid(p.motion))throw std::invalid_argument("Invalid LAN motion");body.put(p.motion.epoch);body.put(p.motion.descriptor);body.put(std::uint32_t{});for(float f:p.motion.position)body.real(f);for(float f:p.motion.rotation)body.real(f);body.real(p.motion.speed);body.real(p.motion.angle);
+  const auto& actions=p.motion.actions;body.put(static_cast<std::uint8_t>(actions.epoch?1:0));body.put(actions.count);body.put(static_cast<std::uint8_t>(actions.sprinting?1:0));body.put(std::uint8_t{});body.put(actions.latest);body.put(actions.source_ms);
+  for(const auto& event:actions.events){body.put(event.serial);body.put(event.source_ms);body.put(static_cast<std::uint8_t>(event.kind));body.put(std::uint8_t{});body.put(std::uint16_t{});body.real(event.direction);}
+  if(body.data.size()!=motion_body_bytes)throw std::logic_error("LAN motion layout mismatch");
+ }
  Bytes out;out.put(std::array<std::uint8_t,4>{'S','K','L','1'});out.put(version);out.put(static_cast<std::uint8_t>(p.kind));out.put(std::uint8_t{});out.put(static_cast<std::uint16_t>(body.data.size()));out.put(std::uint16_t{});out.put(p.room);out.put(p.connection);out.put(p.sender);out.put(p.receiver);out.put(p.sequence);
  out.data.insert(out.data.end(),body.data.begin(),body.data.end());out.put(mac(out.data,key));if(out.data.size()>max_packet_bytes)throw std::length_error("LAN packet limit");return out.data;
 }
@@ -77,7 +89,13 @@ Decoded decode(std::span<const std::uint8_t> bytes,const Id& room,const Key& key
  p.connection=r.fixed<16>();p.sender=r.get<std::uint64_t>();p.receiver=r.get<std::uint64_t>();p.sequence=r.get<std::uint64_t>();
  if(!nonzero(p.connection)||!p.sender||!p.sequence||((p.kind==Kind::challenge)?p.receiver!=0:p.receiver==0))return {Error::value,{}};
  if(build_kind(p.kind)){p.build.purpose=static_cast<Purpose>(r.get<std::uint8_t>());if(r.get<std::uint8_t>()||r.get<std::uint16_t>())return {Error::format,{}};p.build.adapter=r.get<std::uint32_t>();p.build.game=r.fixed<32>();p.build.scenario=r.fixed<32>();if(!valid(p.build))return {Error::value,{}};}
- else if(p.kind==Kind::frame){p.motion.epoch=r.get<std::uint64_t>();p.motion.descriptor=r.get<std::uint32_t>();if(r.get<std::uint32_t>())return {Error::format,{}};for(auto& f:p.motion.position)f=r.real();for(auto& f:p.motion.rotation)f=r.real();p.motion.speed=r.real();p.motion.angle=r.real();if(!valid(p.motion))return {Error::value,{}};}
+ else if(p.kind==Kind::frame){
+  if(size!=motion_body_bytes)return {Error::size,{}};
+  p.motion.epoch=r.get<std::uint64_t>();p.motion.descriptor=r.get<std::uint32_t>();if(r.get<std::uint32_t>())return {Error::format,{}};for(auto& f:p.motion.position)f=r.real();for(auto& f:p.motion.rotation)f=r.real();p.motion.speed=r.real();p.motion.angle=r.real();
+  auto& actions=p.motion.actions;const auto enabled=r.get<std::uint8_t>();if(enabled>1)return {Error::format,{}};actions.count=r.get<std::uint8_t>();const auto flags=r.get<std::uint8_t>();if((flags&~1u)||r.get<std::uint8_t>())return {Error::format,{}};actions.sprinting=(flags&1u)!=0;actions.latest=r.get<std::uint64_t>();actions.source_ms=r.get<std::uint32_t>();if(enabled)actions.epoch=p.motion.epoch;
+  for(auto& event:actions.events){event.serial=r.get<std::uint64_t>();event.source_ms=r.get<std::uint32_t>();event.kind=static_cast<ActionKind>(r.get<std::uint8_t>());if(r.get<std::uint8_t>()||r.get<std::uint16_t>())return {Error::format,{}};event.direction=r.real();}
+  if(!valid(p.motion))return {Error::value,{}};
+ }
  if(r.at!=bytes.size()-tag_bytes)return {Error::size,{}};return {Error::none,p};
  }catch(...){return {Error::crypto,{}};}
 }

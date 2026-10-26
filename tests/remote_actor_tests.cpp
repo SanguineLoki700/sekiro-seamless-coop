@@ -31,6 +31,9 @@ int main(){try{
   m.fresh=true;g.tick(d,m);require(g.speed==.75f);g.tick(d,m,skcoop::lan::State::lost);require(d.phase==Phase::stopped&&g.speed==0);
   g.tick(d,m,skcoop::lan::State::connected,50);require(g.creates==1&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);const auto commands=g.remote_commands;++g.frame.primary;g.tick(d,m);require(d.phase==Phase::stopped&&g.remote_commands==commands);}
+ {Fake g;RemoteActor d;require(d.owned_actor(g.frame)==0);g.tick(d,remote(),skcoop::lan::State::connected,62);require(d.owned_actor(g.frame)==4);
+  auto f=g.frame;f.world++;require(!d.owned_actor(f));f=g.frame;f.primary++;require(!d.owned_actor(f));f=g.frame;f.registry++;require(!d.owned_actor(f));
+  f=g.frame;f.guest++;require(!d.owned_actor(f));f=g.frame;f.field_handle++;require(!d.owned_actor(f));f=g.frame;f.primary_ready=false;require(!d.owned_actor(f));}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);m.motion.epoch++;g.tick(d,m);require(d.phase==Phase::stopped&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);d.stop_requested=true;g.tick(d,m);require(d.phase==Phase::stopped&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m);m.motion.position[0]=100;g.tick(d,m);require(d.phase==Phase::failed&&g.writes==0);}

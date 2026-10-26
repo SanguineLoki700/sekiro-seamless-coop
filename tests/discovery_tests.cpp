@@ -18,7 +18,7 @@ int main(){try{
  sockaddr_in destination{};destination.sin_family=AF_INET;destination.sin_addr.s_addr=htonl(INADDR_LOOPBACK);destination.sin_port=htons(client.read().port);std::array<char,68> unsolicited{};unsolicited[0]='S';unsolicited[1]='K';unsolicited[2]='D';unsolicited[3]='1';unsolicited[4]=1;unsolicited[5]=2;
  sendto(raw,unsolicited.data(),static_cast<int>(unsolicited.size()),0,reinterpret_cast<sockaddr*>(&destination),sizeof(destination));closesocket(raw);WSACleanup();Sleep(80);require(client.read().rooms.size()==1&&!client.read().error,"Unsolicited discovery response was trusted");
  Peer guest({Role::guest,room,build,202});
- wait([&]{Motion a;a.epoch=1;a.descriptor=0xa000;a.position[0]=1;Motion b=a;b.position[0]=3;server.try_offer(a);guest.try_offer(b);return server.read().status.frames_received>=3&&guest.read().status.frames_received>=3;});
+ wait([&]{Motion a;a.epoch=1;a.actions.epoch=1;a.descriptor=0xa000;a.position[0]=1;Motion b=a;b.position[0]=3;server.try_offer(a);guest.try_offer(b);return server.read().status.frames_received>=3&&guest.read().status.frames_received>=3;});
  require(server.read().remote.sample(GetTickCount64())->motion.position[0]==3,"Discovered peer did not provide independent motion");
  guest.stop();server.stop();host.stop();wait([&]{return client.read().rooms.empty();});require(!client.read().error,"Absent host was reported as a connection");client.stop();
  std::cout<<"PASS UDP discovery, source-address selection, unsolicited-response rejection, actual authenticated peers and room expiry\n";return 0;

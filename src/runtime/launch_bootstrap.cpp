@@ -95,7 +95,8 @@ bool valid_initial_status() noexcept {
         load(shared->phase) != static_cast<LONG>(Phase::payload_prepared) || load(shared->fatal_error) != 0 ||
         load(shared->actor_phase) || load(shared->actor_error) ||
         load(shared->actor_motion_paused) || load(shared->actor_metrics_padding) ||
-        load(shared->lan_state)||load(shared->lan_error)||load(shared->lan_wait)||load(shared->lan_system_error))
+        load(shared->lan_state)||load(shared->lan_error)||load(shared->lan_wait)||load(shared->lan_system_error)||
+        load(shared->action_error)||load(shared->action_sprinting))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{
@@ -113,7 +114,11 @@ bool valid_initial_status() noexcept {
         &shared->actor_controller_callbacks, &shared->actor_controller_context_errors,
         &shared->actor_source_captures, &shared->actor_source_nonzero,
         &shared->actor_action_finalizes, &shared->actor_invalid_deltas, &shared->actor_observed_displacement_mm,
-        &shared->actor_graph_writes, &shared->actor_graph_nonzero,&shared->lan_frames_sent,&shared->lan_frames_received,&shared->lan_rejected,&shared->lan_stale_frames};
+        &shared->actor_graph_writes, &shared->actor_graph_nonzero,&shared->lan_frames_sent,&shared->lan_frames_received,&shared->lan_rejected,&shared->lan_stale_frames,
+        &shared->action_captured,&shared->action_replayed,&shared->action_discarded,&shared->action_released,
+        &shared->action_ignored_sources,&shared->action_unsupported_source,
+        &shared->action_jump_captured,&shared->action_step_captured,&shared->action_sprint_captured,
+        &shared->action_jump_replayed,&shared->action_step_replayed,&shared->action_sprint_replayed};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;
