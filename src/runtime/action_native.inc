@@ -96,15 +96,19 @@ void observe_source_body(const SourceObservation& observation) {
     if(!terminated){InterlockedIncrement64(&status->action_unsupported_source);return;}
     const auto* binding=action_binding(std::string_view(name));
     if(!binding){InterlockedIncrement64(&status->action_unsupported_source);return;}
+    if(lan::is_combat(binding->kind)&&!combat_preview){InterlockedIncrement64(&status->action_unsupported_source);return;}
     const auto map=pointer(pointer(pointer(source.character+0xe0)+0x100)+0x18)+0x28;
     if(observation.map!=map||observation.event_id!=binding->source_id)throw InputFailure{Error::input_value};
     const auto& variable=binding->kind==lan::ActionKind::ground_jump_ready?source.jump_angle:source.angle;
-    const auto direction=reinterpret_cast<ReadGraphFloat>(base+0xff3250)(&variable);
+    const auto direction=lan::is_combat(binding->kind)?0.f:reinterpret_cast<ReadGraphFloat>(base+0xff3250)(&variable);
     if(action_capture.capture(binding->kind,action_source_ms(),direction)){
         InterlockedIncrement64(&status->action_captured);
         if(binding->kind==lan::ActionKind::ground_jump_ready)InterlockedIncrement64(&status->action_jump_captured);
         if(binding->kind==lan::ActionKind::ground_step)InterlockedIncrement64(&status->action_step_captured);
         if(binding->kind==lan::ActionKind::sprint_start_from_step)InterlockedIncrement64(&status->action_sprint_captured);
+        if(lan::is_attack(binding->kind))InterlockedIncrement64(&status->action_attack_captured);
+        if(lan::is_guard_enter(binding->kind))InterlockedIncrement64(&status->action_guard_enter_captured);
+        if(lan::is_guard_exit(binding->kind))InterlockedIncrement64(&status->action_guard_exit_captured);
     }
     else action_fault(action_capture.fault());
 }
@@ -194,7 +198,8 @@ struct GuestActions {
     GraphVariable angle,speed,jump_angle,jump_stick;
     float prior_jump_angle{},prior_jump_stick{};
     std::array<int,action_bindings.size()> ids{};
-    bool sprinting{},inputs{};
+    bool sprinting{},inputs{},guarding{};
+    lan::ActionKind pending_attack_release{};
 } guest_actions;
 Token action_graph(Token actor) {return pointer(pointer(pointer(actor+0x1ff8)+0x28)+0x10);}
 void validate_action_actor(Token actor) {
@@ -236,6 +241,7 @@ void bind_guest_actions(Token actor) {
 }
 void enqueue_guest(lan::ActionKind kind,float direction) {
     const auto* binding=action_binding(kind);if(!binding||!std::isfinite(direction)||std::abs(direction)>360)throw InputFailure{Error::input_value};
+    if(lan::is_combat(kind)&&!combat_preview)throw InputFailure{Error::input_value};
     auto& guest=guest_actions;bind_guest_actions(remote_actor.owned_actor(game.frame));validate_action_actor(guest.actor);
     const auto capacity=read<int>(guest.queue+8),tail=read<int>(guest.queue+0x10),count=read<int>(guest.queue+0x14);
     if(!valid_event_queue(capacity,tail,count))throw InputFailure{Error::input_range};
@@ -246,50 +252,83 @@ void enqueue_guest(lan::ActionKind kind,float direction) {
             ((page.Protect&0xff)!=PAGE_READWRITE&&(page.Protect&0xff)!=PAGE_WRITECOPY))throw InputFailure{Error::input_range};
     }
     const auto set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
-    const bool jump=kind==lan::ActionKind::ground_jump_ready;
-    set(&guest.angle,direction);set(&guest.jump_angle,jump?direction:guest.prior_jump_angle);
-    set(&guest.jump_stick,jump?1.f:guest.prior_jump_stick);guest.inputs=true;
+    if(!lan::is_combat(kind)){
+        const bool jump=kind==lan::ActionKind::ground_jump_ready;
+        set(&guest.angle,direction);set(&guest.jump_angle,jump?direction:guest.prior_jump_angle);
+        set(&guest.jump_stick,jump?1.f:guest.prior_jump_stick);guest.inputs=true;
+    }
     // The native helper receives a pointer SLOT, not a character pointer.
     auto character=guest.character;using Enqueue=bool (*)(Token*,int);
     const auto index=static_cast<std::size_t>(binding-action_bindings.data());
     if(!reinterpret_cast<Enqueue>(base+0xff1d10)(&character,guest.ids[index]))throw InputFailure{Error::input_value};
     guest.sprinting=kind==lan::ActionKind::sprint_start_from_step;
+    if(lan::is_guard_enter(kind)){
+        guest.guarding=true;InterlockedExchange(&status->action_guard_rearm_required,0);
+    }else if(lan::is_guard_exit(kind))guest.guarding=false;
+    if(kind==lan::ActionKind::attack_combo1)guest.pending_attack_release=lan::ActionKind::attack_combo1_release;
+    else if(kind==lan::ActionKind::attack_combo2)guest.pending_attack_release=lan::ActionKind::attack_combo2_release;
+    else guest.pending_attack_release=lan::ActionKind::none;
     InterlockedExchange(&status->action_sprinting,guest.sprinting?1:0);
+    InterlockedExchange(&status->action_guarding,guest.guarding?1:0);
 }
 void release_guest_actions() {
-    auto& guest=guest_actions;if(!guest.actor||(!guest.inputs&&!guest.sprinting))return;
+    auto& guest=guest_actions;if(!guest.actor||(!guest.inputs&&!guest.sprinting&&!guest.guarding&&guest.pending_attack_release==lan::ActionKind::none))return;
     validate_action_actor(guest.actor);
-    if(guest.sprinting)enqueue_guest(lan::ActionKind::sprint_stop_ready,0);
+    const auto release=guest.pending_attack_release;
+    const bool sprinting=guest.sprinting,guarding=guest.guarding;
+    if(release!=lan::ActionKind::none)enqueue_guest(release,0);
+    if(sprinting)enqueue_guest(lan::ActionKind::sprint_stop_ready,0);
+    if(guarding)enqueue_guest(lan::ActionKind::guard_exit,0);
     const auto set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
-    set(&guest.jump_angle,guest.prior_jump_angle);set(&guest.jump_stick,guest.prior_jump_stick);
-    set(&guest.speed,0);set(&guest.angle,0);guest.inputs=guest.sprinting=false;
+    if(guest.inputs){set(&guest.jump_angle,guest.prior_jump_angle);set(&guest.jump_stick,guest.prior_jump_stick);set(&guest.speed,0);set(&guest.angle,0);}
+    guest.inputs=guest.sprinting=guest.guarding=false;guest.pending_attack_release=lan::ActionKind::none;
     InterlockedExchange(&status->action_sprinting,0);InterlockedIncrement64(&status->action_released);
 }
 void retire_actions_body() noexcept {
     action_consumer_active=false;InterlockedExchange(&action_source_enabled,0);action_receiver.suspend();
+    InterlockedExchange(&status->action_guard_rearm_required,0);
     try{release_guest_actions();}catch(...){/* A changed lifetime forbids old actor writes. */}
 }
 void guarded_retire_actions() noexcept {
     __try {retire_actions_body();}__except(EXCEPTION_EXECUTE_HANDLER){}
 }
 void receive_actions(const Frame&,bool following) {
+    if(!combat_preview){
+        const auto allowed=[](const lan::ActionSnapshot& history){
+            if(history.guarding)return false;
+            for(std::size_t i=0;i<history.count;++i)if(lan::is_combat(history.events[i].kind))return false;
+            return true;
+        };
+        if(network_view.actions.latest()&&!allowed(network_view.actions.latest()->history))action_fault(lan::ActionFault::invalid);
+        for(const auto& batch:network_view.actions.pending())if(!allowed(batch.history))action_fault(lan::ActionFault::invalid);
+    }
     action_consumer_active=following&&!InterlockedCompareExchange(&status->action_error,0,0);
     action_receiver.observe(network_view.actions,action_consumer_active,GetTickCount64());
     if(action_receiver.fault()!=lan::ActionFault::none)action_fault(action_receiver.fault());
     if(InterlockedCompareExchange(&status->action_error,0,0)){guarded_retire_actions();remote_actor.fail(Error::input_value);return;}
-    if(!action_receiver.active())release_guest_actions();
+    if(!action_receiver.active()){release_guest_actions();InterlockedExchange(&status->action_guard_rearm_required,0);}
     else {
         while(const auto event=action_receiver.take(GetTickCount64())){
             enqueue_guest(event->kind,event->direction);InterlockedIncrement64(&status->action_replayed);
             if(event->kind==lan::ActionKind::ground_jump_ready)InterlockedIncrement64(&status->action_jump_replayed);
             if(event->kind==lan::ActionKind::ground_step)InterlockedIncrement64(&status->action_step_replayed);
             if(event->kind==lan::ActionKind::sprint_start_from_step)InterlockedIncrement64(&status->action_sprint_replayed);
+            if(lan::is_attack(event->kind))InterlockedIncrement64(&status->action_attack_replayed);
+            if(lan::is_guard_enter(event->kind))InterlockedIncrement64(&status->action_guard_enter_replayed);
+            if(lan::is_guard_exit(event->kind))InterlockedIncrement64(&status->action_guard_exit_replayed);
         }
         if(!action_receiver.active())release_guest_actions();
         else if(!action_receiver.pending()&&action_receiver.held_sprint()&&!guest_actions.sprinting)
             enqueue_guest(lan::ActionKind::sprint_start_from_step,network_view.actions.latest()->history.events[network_view.actions.latest()->history.count-1].direction);
         else if(!action_receiver.pending()&&!action_receiver.held_sprint()&&guest_actions.sprinting)
             enqueue_guest(lan::ActionKind::sprint_stop_ready,0);
+        if(action_receiver.active()&&!action_receiver.pending()){
+            if(!action_receiver.held_guard()&&guest_actions.guarding)enqueue_guest(lan::ActionKind::guard_exit,0);
+            // A guard entry may open a deflect window. No neutral restoration
+            // command is proven: never synthesize an old press on a baseline.
+            InterlockedExchange(&status->action_guard_rearm_required,
+                action_receiver.held_guard()&&!guest_actions.guarding?1:0);
+        }
     }
     InterlockedExchange64(&status->action_discarded,static_cast<LONG64>(action_receiver.discarded()));
     const auto ack=action_receiver.acknowledgement();if(ack)network->try_ack_actions(ack);

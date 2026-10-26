@@ -69,7 +69,7 @@ std::vector<std::uint8_t> encode(const Packet& p,const Key& key){
  Bytes body;if(build_kind(p.kind)){if(!valid(p.build))throw std::invalid_argument("Invalid LAN identity");body.put(static_cast<std::uint8_t>(p.build.purpose));body.put(std::uint8_t{});body.put(std::uint16_t{});body.put(p.build.adapter);body.put(p.build.game);body.put(p.build.scenario);}
  else if(p.kind==Kind::frame){
   if(!valid(p.motion))throw std::invalid_argument("Invalid LAN motion");body.put(p.motion.epoch);body.put(p.motion.descriptor);body.put(std::uint32_t{});for(float f:p.motion.position)body.real(f);for(float f:p.motion.rotation)body.real(f);body.real(p.motion.speed);body.real(p.motion.angle);
-  const auto& actions=p.motion.actions;body.put(static_cast<std::uint8_t>(actions.epoch?1:0));body.put(actions.count);body.put(static_cast<std::uint8_t>(actions.sprinting?1:0));body.put(std::uint8_t{});body.put(actions.latest);body.put(actions.source_ms);
+  const auto& actions=p.motion.actions;body.put(static_cast<std::uint8_t>(actions.epoch?1:0));body.put(actions.count);body.put(static_cast<std::uint8_t>((actions.sprinting?1:0)|(actions.guarding?2:0)));body.put(std::uint8_t{});body.put(actions.latest);body.put(actions.source_ms);
   for(const auto& event:actions.events){body.put(event.serial);body.put(event.source_ms);body.put(static_cast<std::uint8_t>(event.kind));body.put(std::uint8_t{});body.put(std::uint16_t{});body.real(event.direction);}
   if(body.data.size()!=motion_body_bytes)throw std::logic_error("LAN motion layout mismatch");
  }
@@ -92,7 +92,7 @@ Decoded decode(std::span<const std::uint8_t> bytes,const Id& room,const Key& key
  else if(p.kind==Kind::frame){
   if(size!=motion_body_bytes)return {Error::size,{}};
   p.motion.epoch=r.get<std::uint64_t>();p.motion.descriptor=r.get<std::uint32_t>();if(r.get<std::uint32_t>())return {Error::format,{}};for(auto& f:p.motion.position)f=r.real();for(auto& f:p.motion.rotation)f=r.real();p.motion.speed=r.real();p.motion.angle=r.real();
-  auto& actions=p.motion.actions;const auto enabled=r.get<std::uint8_t>();if(enabled>1)return {Error::format,{}};actions.count=r.get<std::uint8_t>();const auto flags=r.get<std::uint8_t>();if((flags&~1u)||r.get<std::uint8_t>())return {Error::format,{}};actions.sprinting=(flags&1u)!=0;actions.latest=r.get<std::uint64_t>();actions.source_ms=r.get<std::uint32_t>();if(enabled)actions.epoch=p.motion.epoch;
+  auto& actions=p.motion.actions;const auto enabled=r.get<std::uint8_t>();if(enabled>1)return {Error::format,{}};actions.count=r.get<std::uint8_t>();const auto flags=r.get<std::uint8_t>();if((flags&~3u)||r.get<std::uint8_t>())return {Error::format,{}};actions.sprinting=(flags&1u)!=0;actions.guarding=(flags&2u)!=0;actions.latest=r.get<std::uint64_t>();actions.source_ms=r.get<std::uint32_t>();if(enabled)actions.epoch=p.motion.epoch;
   for(auto& event:actions.events){event.serial=r.get<std::uint64_t>();event.source_ms=r.get<std::uint32_t>();event.kind=static_cast<ActionKind>(r.get<std::uint8_t>());if(r.get<std::uint8_t>()||r.get<std::uint16_t>())return {Error::format,{}};event.direction=r.real();}
   if(!valid(p.motion))return {Error::value,{}};
  }

@@ -21,7 +21,14 @@ int main(){try{
  {skcoop::launch::Payload p{};require(valid_lan_payload(p));p.lan_role=1;require(!valid_lan_payload(p));p.actor_test=skcoop::launch::ActorTest::lan;require(!valid_lan_payload(p));
   p.scenario_sha256[0]=1;const auto code=skcoop::lan::ticket_text({"127.0.0.1",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});std::copy(code.begin(),code.end(),p.lan_ticket);require(valid_lan_payload(p));
   p.lan_profile=1;require(!valid_lan_payload(p));std::copy(skcoop::lan::independent_motion_scenario.begin(),skcoop::lan::independent_motion_scenario.end(),p.scenario_sha256);require(valid_lan_payload(p));
-  p.lan_profile=2;require(!valid_lan_payload(p));p.lan_profile=1;
+  p.lan_profile=2;require(!valid_lan_payload(p));
+  std::copy(skcoop::lan::local_combat_scenario.begin(),skcoop::lan::local_combat_scenario.end(),p.scenario_sha256);require(valid_lan_payload(p));
+  p.lan_role=2;require(!valid_lan_payload(p));p.lan_role=1;
+  const auto remote_code=skcoop::lan::ticket_text({"192.168.1.2",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});
+  std::fill(std::begin(p.lan_ticket),std::end(p.lan_ticket),char{});std::copy(remote_code.begin(),remote_code.end(),p.lan_ticket);require(!valid_lan_payload(p));
+  std::fill(std::begin(p.lan_ticket),std::end(p.lan_ticket),char{});std::copy(code.begin(),code.end(),p.lan_ticket);
+  p.lan_profile=3;require(!valid_lan_payload(p));p.lan_profile=1;
+  std::copy(skcoop::lan::independent_motion_scenario.begin(),skcoop::lan::independent_motion_scenario.end(),p.scenario_sha256);
   p.lan_ticket[159]='x';require(!valid_lan_payload(p));}
  {Fake g;RemoteActor d;g.tick(d,{},skcoop::lan::State::connected,300);require(g.creates==0&&g.writes==0&&g.local_commands==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connecting,300);require(g.creates==0);m.motion.position={0,0,0};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::separation);m.motion.position={0,0,30};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::area);}

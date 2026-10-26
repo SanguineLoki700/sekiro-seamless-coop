@@ -21,7 +21,7 @@ bool overlaps_match(const ActionSnapshot& old, const ActionSnapshot& next) noexc
 }
 
 bool valid(ActionKind kind) noexcept {
-    return kind >= ActionKind::stand_move_start && kind <= ActionKind::land_ground_jump;
+    return kind >= ActionKind::stand_move_start && kind <= ActionKind::guard_exit;
 }
 bool valid(const ActionScope& scope) noexcept {
     const auto nonzero = [](const auto& bytes) {
@@ -33,6 +33,7 @@ bool valid(const ActionSnapshot& snapshot) noexcept {
     if (!snapshot.epoch || snapshot.count != std::min<std::uint64_t>(snapshot.latest, action_history_capacity))
         return false;
     std::uint32_t previous_ms{};
+    std::optional<bool> guarding;
     for (std::size_t i = 0; i < snapshot.events.size(); ++i) {
         const auto& event = snapshot.events[i];
         if (i >= snapshot.count) {
@@ -43,13 +44,36 @@ bool valid(const ActionSnapshot& snapshot) noexcept {
             event.source_ms > snapshot.source_ms || (i && event.source_ms < previous_ms))
             return false;
         previous_ms = event.source_ms;
+        if (is_guard_enter(event.kind)) guarding = true;
+        else if (is_guard_exit(event.kind)) guarding = false;
     }
+    // With the complete history available, no guard press means not held.
+    // Once an older press rolls out, unrelated retained actions cannot clear it.
+    if (!guarding && snapshot.latest == snapshot.count) guarding = false;
+    if (guarding && snapshot.guarding != *guarding) return false;
     // Logical held-state policy: sprint-start sets it, the other allowed
     // movement/step/stop/jump/landing transitions clear it. The retained last
     // event determines the declared state after older history rolls out; a
     // no-event initial snapshot cannot claim sprint.
     return snapshot.sprinting == (snapshot.count &&
         snapshot.events[snapshot.count - 1].kind == ActionKind::sprint_start_from_step);
+}
+
+bool consistent_guard(const ActionSnapshot& previous, const ActionSnapshot& next) noexcept {
+    if (!valid(previous) || !valid(next) || next.epoch != previous.epoch || next.latest < previous.latest)
+        return false;
+    if (next.latest == previous.latest) return next.guarding == previous.guarding;
+    // The ordinary push path separately refuses this gap. Explicit rebaseline
+    // is allowed to discard a missing prefix, whose guard transitions are unknown.
+    if (next.events[0].serial > previous.latest + 1) return true;
+    bool held = previous.guarding;
+    for (std::size_t i = 0; i < next.count; ++i) {
+        const auto& event = next.events[i];
+        if (event.serial <= previous.latest) continue;
+        if (is_guard_enter(event.kind)) held = true;
+        else if (is_guard_exit(event.kind)) held = false;
+    }
+    return next.guarding == held;
 }
 
 ActionCapture::ActionCapture(std::uint64_t epoch, std::uint32_t source_ms) noexcept {
@@ -71,6 +95,8 @@ bool ActionCapture::capture(ActionKind kind, std::uint32_t source_ms, float dire
     history_.source_ms = source_ms;
     history_.events[history_.count++] = {++history_.latest, source_ms, kind, direction};
     history_.sprinting = kind == ActionKind::sprint_start_from_step;
+    if (is_guard_enter(kind)) history_.guarding = true;
+    else if (is_guard_exit(kind)) history_.guarding = false;
     return true;
 }
 std::optional<ActionSnapshot> ActionCapture::snapshot(std::uint32_t source_ms) noexcept {
@@ -106,7 +132,7 @@ bool ActionTimeline::baseline(const ActionScope& scope, const ActionSnapshot& sn
         if (scope != scope_) return fail(ActionFault::scope_changed);
         if (sequence < sequence_ || arrival < arrival_ || snapshot.source_ms < known_.source_ms)
             return fail(ActionFault::clock_regressed);
-        if (snapshot.latest < known_.latest || !overlaps_match(known_, snapshot))
+        if (snapshot.latest < known_.latest || !overlaps_match(known_, snapshot) || !consistent_guard(known_, snapshot))
             return fail(ActionFault::invalid);
         if (sequence == sequence_ && snapshot != known_) return fail(ActionFault::invalid);
     }
@@ -134,7 +160,7 @@ ActionPush ActionTimeline::push(const ActionScope& scope, const ActionSnapshot& 
     if (arrival < arrival_ || snapshot.source_ms < known_.source_ms ||
         arrival > std::numeric_limits<std::uint64_t>::max() - action_delay_ms)
         return reject(ActionFault::clock_regressed);
-    if (snapshot.latest < known_.latest || !overlaps_match(known_, snapshot))
+    if (snapshot.latest < known_.latest || !overlaps_match(known_, snapshot) || !consistent_guard(known_, snapshot))
         return reject(ActionFault::invalid);
     if (snapshot.latest > known_.latest &&
         snapshot.events[0].serial > known_.latest + 1)

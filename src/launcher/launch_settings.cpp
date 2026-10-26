@@ -128,7 +128,8 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
             result.actor_graph_locomotion_test = value == L"graph-locomotion";
             result.actor_lan_test = value == L"lan";
         } else if(bit==128) {
-            if(value!=L"independent")invalid("Unknown LAN profile mode.");result.independent_profile=true;
+            if(value!=L"independent"&&value!=L"combat-preview")invalid("Unknown LAN profile mode.");
+            result.independent_profile=true;result.combat_preview=value==L"combat-preview";
         } else if(bit==32) {
             if(value!=L"host"&&value!=L"guest") invalid("LAN role must be host or guest.");
             result.lan_role=value==L"host"?1u:2u;

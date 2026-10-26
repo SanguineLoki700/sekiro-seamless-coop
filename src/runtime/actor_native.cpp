@@ -53,7 +53,7 @@ bool graph_locomotion{};
 std::uint64_t graph_writes{},graph_nonzero{};
 LARGE_INTEGER frequency{};
 thread_local RegionQueries regions;
-bool actions_mode{};
+bool actions_mode{},combat_preview{};
 SRWLOCK action_ingress=SRWLOCK_INIT;
 bool action_consumer_active{}; // protected by action_ingress
 struct InputFailure { Error error; };
@@ -564,7 +564,7 @@ DWORD WINAPI worker(void*) noexcept {
         c.ticket=*lan::parse_ticket(lan_launch.lan_ticket);c.participant=lan::random_participant();c.build.purpose=lan::Purpose::native_avatar;
         if(lan_launch.lan_profile)c.build.adapter=lan::independent_adapter;
         std::copy_n(lan_launch.executable_sha256,32,c.build.game.begin());std::copy_n(lan_launch.scenario_sha256,32,c.build.scenario.begin());
-        network=new lan::Peer(std::move(c));SecureZeroMemory(lan_launch.lan_ticket,sizeof(lan_launch.lan_ticket));
+        network=new lan::Peer(std::move(c),combat_preview?"127.0.0.1":"0.0.0.0");SecureZeroMemory(lan_launch.lan_ticket,sizeof(lan_launch.lan_ticket));
     }catch(...){fail_demo(Error::binding);publish();return 0;}}
     auto* slot=reinterpret_cast<void* volatile*>(base+creator_vtable+0x48);
     if (!readable(reinterpret_cast<std::uintptr_t>(slot),sizeof(void*)) ||
@@ -630,7 +630,8 @@ bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode,const
     lan_mode=mode==launch::ActorTest::lan;
     if(lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
     status=shared;
-    actions_mode=lan_mode&&lan_launch.lan_profile==1;
+    actions_mode=lan_mode&&lan_launch.lan_profile!=0;
+    combat_preview=lan_mode&&lan_launch.lan_profile==2;
     graph_locomotion=mode==launch::ActorTest::graph_locomotion||lan_mode;
     demo.native_locomotion=mode==launch::ActorTest::locomotion || graph_locomotion;
     demo.native_pad_reference=mode==launch::ActorTest::pad_reference;

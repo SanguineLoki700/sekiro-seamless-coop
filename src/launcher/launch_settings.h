@@ -22,6 +22,7 @@ struct LaunchSettings {
     bool actor_graph_locomotion_test{};
     bool actor_lan_test{};
     bool independent_profile{};
+    bool combat_preview{};
     std::uint32_t lan_role{};
     std::string lan_code;
 };

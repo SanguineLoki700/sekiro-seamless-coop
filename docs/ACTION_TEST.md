@@ -25,9 +25,10 @@ antes da limitação de envio a 20 Hz. Só pode remover um registro após entreg
 Uma lacuna maior que o histórico, transbordamento ou contenção que impediria
 registrar um evento encerra o teste com erro visível.
 
-O envelope LAN passa para `SKL1/v2`: frames de 244 bytes, incluindo HMAC-SHA256,
+O primeiro incremento de movimento usou `SKL1/v2`: frames de 244 bytes, incluindo HMAC-SHA256,
 com 96 bytes explícitos para histórico e estado de corrida. O adaptador nativo
-independente passa para 3, e o bootstrap privado para 11. Os dois computadores
+independente 3 e bootstrap privado 11. O candidato de [ataques e defesa locais](COMBAT_PREVIEW.md)
+usa LAN 3, adaptador 4 e bootstrap 12, conservando o tamanho do frame. Os dois computadores
 precisam atualizar o pacote completo. O codec de campanha não mudou.
 
 O receptor usa sala, conexão, participante e época autenticados pelo transporte.

@@ -96,7 +96,7 @@ bool valid_initial_status() noexcept {
         load(shared->actor_phase) || load(shared->actor_error) ||
         load(shared->actor_motion_paused) || load(shared->actor_metrics_padding) ||
         load(shared->lan_state)||load(shared->lan_error)||load(shared->lan_wait)||load(shared->lan_system_error)||
-        load(shared->action_error)||load(shared->action_sprinting))
+        load(shared->action_error)||load(shared->action_sprinting)||load(shared->action_guarding)||load(shared->action_guard_rearm_required))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{
@@ -118,7 +118,9 @@ bool valid_initial_status() noexcept {
         &shared->action_captured,&shared->action_replayed,&shared->action_discarded,&shared->action_released,
         &shared->action_ignored_sources,&shared->action_unsupported_source,
         &shared->action_jump_captured,&shared->action_step_captured,&shared->action_sprint_captured,
-        &shared->action_jump_replayed,&shared->action_step_replayed,&shared->action_sprint_replayed};
+        &shared->action_jump_replayed,&shared->action_step_replayed,&shared->action_sprint_replayed,
+        &shared->action_attack_captured,&shared->action_attack_replayed,&shared->action_guard_enter_captured,&shared->action_guard_exit_captured,
+        &shared->action_guard_enter_replayed,&shared->action_guard_exit_replayed};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     return true;

@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=11;
+inline constexpr std::uint32_t protocol_version=12;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -37,7 +37,7 @@ struct Payload {
     ActorTest actor_test;
     std::uint32_t actor_padding;
     std::uint32_t lan_role; // 0 disabled, 1 host, 2 guest; never a Steam identity.
-    std::uint32_t lan_profile; // 0 legacy identical fixture, 1 own persistent test profile.
+    std::uint32_t lan_profile; // 0 legacy fixture, 1 own profile, 2 local combat preview.
     char lan_ticket[160]; // Private credential, omitted from receipts.
     std::uint8_t scenario_sha256[32]; // Declared controlled scenario; never a map ID.
     std::uint64_t reserved[4];
@@ -116,6 +116,10 @@ struct alignas(8) SharedStatus {
     volatile LONG64 action_unsupported_source;
     volatile LONG64 action_jump_captured,action_step_captured,action_sprint_captured;
     volatile LONG64 action_jump_replayed,action_step_replayed,action_sprint_replayed;
+    volatile LONG action_guarding,action_guard_rearm_required;
+    volatile LONG64 action_attack_captured,action_attack_replayed;
+    volatile LONG64 action_guard_enter_captured,action_guard_exit_captured;
+    volatile LONG64 action_guard_enter_replayed,action_guard_exit_replayed;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);
@@ -123,5 +127,6 @@ static_assert(std::is_standard_layout_v<Payload> && std::is_trivially_copyable_v
 static_assert(std::is_standard_layout_v<SharedStatus> && std::is_trivially_copyable_v<SharedStatus>);
 static_assert(offsetof(SharedStatus,hooks_mask)%8==0);
 static_assert(offsetof(SharedStatus,action_captured)%8==0 && offsetof(SharedStatus,action_unsupported_source)%8==0);
+static_assert(offsetof(SharedStatus,action_attack_captured)%8==0);
 static_assert(sizeof(Payload)<65536);
 } // namespace skcoop::launch

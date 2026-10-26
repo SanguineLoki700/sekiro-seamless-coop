@@ -4,6 +4,15 @@ Atualize o pacote completo nos DOIS computadores. Extraia o ZIP fora da pasta
 do jogo, por exemplo C:\SekiroCoopTeste. Mantenha o executavel e SeamlessCoop juntos.
 A atualizacao nao inclui nem substitui perfis ou saves criados anteriormente.
 
+TESTE SO COM ESTE PC: use o botao "Testar ataques e defesa neste PC".
+Escolha Continuar, procure um trecho plano e vazio, sem inimigos proximos.
+Pressione F8, espere 2 segundos e ande poucos passos. Quando o segundo
+personagem aparecer, espere 3 segundos e confira golpes e defesa, depois solte.
+O parceiro simulado ja faz parte do assistente. O limite e de 90 segundos
+e 6 metros de trajeto; isso nao e um segundo jogo nem validacao de dano.
+Se pausar enquanto defende, solte e aperte a defesa novamente ao retomar.
+Feche o jogo pelo menu quando terminar.
+
 1. Deixe a Steam aberta, cada computador na sua propria conta com Sekiro.
 2. Abra SekiroCoopTeste.exe nos dois computadores.
 3. No PC, clique em Criar jogo neste PC. O assistente prepara e abre o jogo.

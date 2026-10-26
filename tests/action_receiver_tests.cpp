@@ -56,6 +56,8 @@ void contracts(){
         !valid_event_queue(8,9,0)&&!valid_event_queue(8,0,-1)&&!valid_event_queue(8,0,8));
     require(action_binding("W_GroundJumpReady")->guest_id==989);
     require(action_binding(ActionKind::ground_jump_ready)->source_id==988);
+    require(action_binding(ActionKind::attack_combo1)->source_id==3544&&action_binding(ActionKind::guard_exit)->guest_id==631);
+    require(action_bindings.size()==action_kind_count);
     require(!action_binding("arbitrary-peer-event")&&!action_binding(ActionKind::none));
     for(const auto& b:action_bindings){require(action_binding(b.kind)==&b&&action_binding(b.source_name)==&b);}
     Stream s;ActionReceiver receiver;s.offer(0,1000);receiver.observe(s.frames,true,1000);

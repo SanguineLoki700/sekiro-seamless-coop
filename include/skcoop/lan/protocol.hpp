@@ -6,9 +6,9 @@
 namespace skcoop::lan {
 using Id=std::array<std::uint8_t,16>;
 using Key=core::Sha256;
-inline constexpr std::uint16_t version=2;
+inline constexpr std::uint16_t version=3;
 inline constexpr std::size_t header_bytes=68,tag_bytes=32,max_packet_bytes=256;
-inline constexpr std::uint32_t action_adapter=3;
+inline constexpr std::uint32_t action_adapter=4;
 inline constexpr std::size_t motion_body_bytes=144;
 enum class Purpose:std::uint8_t { connection_check=1,native_avatar=2 };
 enum class Kind:std::uint8_t { challenge=1,hello,welcome,ack,ready,frame,heartbeat,bye };

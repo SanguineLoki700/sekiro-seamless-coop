@@ -68,12 +68,13 @@ void action_codec(){
  require(bytes.size()==244&&bytes.size()==header_bytes+motion_body_bytes+tag_bytes&&bytes.size()<=max_packet_bytes,"Action wire exceeds fixed packet bound");
  require(decoded&&decoded.packet->motion==p.motion,"Four-entry action history wire roundtrip");
  for(std::size_t i=0;i<bytes.size();++i){auto damaged=bytes;damaged[i]^=1;require(!decode(damaged,t.room,t.key),"Mutated action packet authenticated");}
- auto old=bytes;old[4]=1;require(decode(old,t.room,t.key).error==Error::version,"Wire1 admitted by wire2");
+ for(const auto previous:{1u,2u}){auto old=bytes;old[4]=static_cast<std::uint8_t>(previous);require(decode(old,t.room,t.key).error==Error::version,"Previous wire admitted by wire3");}
  const auto malformed=[&](std::size_t offset,std::uint8_t value,Error error){auto bad=bytes;bad[offset]=value;retag(bad,t.key);require(decode(bad,t.room,t.key).error==error,"Authenticated malformed action encoding accepted");};
  constexpr auto start=header_bytes+48;
  malformed(start,2,Error::format); // Enabled flag is not an extensible bit mask.
  malformed(start+1,5,Error::value);
- malformed(start+2,2,Error::format); // Unknown held-state flag.
+ malformed(start+2,4,Error::format); // Unknown held-state flag.
+ malformed(start+2,2,Error::value); // Complete movement-only history cannot invent guard.
  malformed(start+3,1,Error::format);
  malformed(start+2,1,Error::value); // Sprint state contradicts the retained stop/step event.
  malformed(start+4,5,Error::value); // Inconsistent latest/retained serials.
@@ -83,15 +84,28 @@ void action_codec(){
  malformed(start,0,Error::value); // Disabled history must be entirely zero.
  auto mismatched=p.motion;++mismatched.actions.epoch;require(!valid(mismatched),"Action epoch differs from motion epoch");
  auto inactive=motion();inactive.actions.source_ms=1;require(!valid(inactive),"Noncanonical disabled history accepted");
- ActionCapture empty(7);auto zero=action_motion(empty,0);require(valid(action_build(),zero),"Adapter3 zero-event initial snapshot refused");
- auto disabled=zero;disabled.actions={};require(valid(disabled)&&!valid(action_build(),disabled),"Adapter3 allowed absent action history");
+ ActionCapture empty(7);auto zero=action_motion(empty,0);require(valid(action_build(),zero),"Current action adapter zero-event initial snapshot refused");
+ auto disabled=zero;disabled.actions={};require(valid(disabled)&&!valid(action_build(),disabled),"Current action adapter allowed absent action history");
  Build checker;require(!valid(checker,zero),"Checker allowed native action frame");
  auto legacy=action_build();legacy.adapter=2;require(valid(legacy,disabled)&&!valid(legacy,zero),"Legacy adapter silently accepted action semantics");
- auto unknown=action_build();unknown.adapter=4;require(!valid(unknown),"Unknown adapter accepted");
+ auto old_adapter=action_build();old_adapter.adapter=3;require(!valid(old_adapter),"Old action adapter mixed with combat semantics");
+ auto unknown=action_build();unknown.adapter=action_adapter+1;require(!valid(unknown),"Unknown adapter accepted");
  ActionCapture sprint(7);require(sprint.capture(ActionKind::sprint_start_from_step,1),"Sprint state capture failed");p.motion=action_motion(sprint,2);const auto running=encode(p,t.key);const auto run=decode(running,t.room,t.key);
  require(running.size()==244&&running[start+2]==1&&run&&run.packet->motion.actions.sprinting&&run.packet->motion==p.motion,"Held sprint state did not survive fixed-size wire roundtrip");
  auto contradicted=running;contradicted[start+2]=0;retag(contradicted,t.key);require(decode(contradicted,t.room,t.key).error==Error::value,"Wire dropped sprint state while retaining sprint-start event");
  p.motion=disabled;const auto plain=encode(p,t.key);auto disabled_sprint=plain;disabled_sprint[start+2]=1;retag(disabled_sprint,t.key);require(decode(disabled_sprint,t.room,t.key).error==Error::value,"Disabled action history carried held sprint state");
+ auto disabled_guard=plain;disabled_guard[start+2]=2;retag(disabled_guard,t.key);require(decode(disabled_guard,t.room,t.key).error==Error::value,"Disabled action history carried held guard state");
+ ActionCapture all(7);
+ for(std::uint32_t i=1;i<=action_kind_count;++i){
+  require(all.capture(static_cast<ActionKind>(i),i),"Allowed combat/movement event capture failed");p.motion=action_motion(all,i);
+  const auto encoded=encode(p,t.key);const auto roundtrip=decode(encoded,t.room,t.key);
+  require(encoded.size()==244&&roundtrip&&roundtrip.packet->motion==p.motion,"Combat action/held guard wire roundtrip failed");
+  require(all.offered(p.motion.actions.latest),"Combat history local offer watermark failed");
+ }
+ ActionCapture guarding(7);require(guarding.capture(ActionKind::guard_enter3,1),"Guard entry capture failed");p.motion=action_motion(guarding,2);
+ const auto guarded=encode(p,t.key);const auto parsed=decode(guarded,t.room,t.key);
+ require(guarded[start+2]==2&&parsed&&parsed.packet->motion.actions.guarding,"Held guard flag lost");
+ auto missing_guard=guarded;missing_guard[start+2]=0;retag(missing_guard,t.key);require(decode(missing_guard,t.room,t.key).error==Error::value,"Retained guard entry accepted contradictory held flag");
 }
 void action_envelopes_and_views(){
  const auto t=ticket();const auto build=action_build();Session host({Role::host,t,build,101}),guest({Role::guest,t,build,202});authenticated_pair(host,guest);
@@ -122,7 +136,7 @@ void action_envelopes_and_views(){
  require(guest.receive(packet,1401),"Valid scoped frame refused after replay attempts");const auto accepted=guest.take_remote_frame();require(accepted&&accepted->packet_sequence==packet.sequence,"Wrong sequence attached to accepted frame");
  require(!guest.receive(packet,1402)&&!guest.take_remote_frame(),"Sequence replay republished history");
  // New adapter cannot bypass action history via a generic, otherwise valid frame.
- packet.sequence++;packet.motion.actions={};require(!guest.receive(packet,1403)&&guest.failure()==Failure::protocol,"Adapter3 silently fell back to motion-only");
+ packet.sequence++;packet.motion.actions={};require(!guest.receive(packet,1403)&&guest.failure()==Failure::protocol,"Action adapter silently fell back to motion-only");
 }
 void action_view_bounds(){
  const auto t=ticket();ActionScope scope{t.room,random_id(),101,7};ActionCapture capture(7);ActionFrameBuffer buffer;
@@ -147,6 +161,20 @@ void action_view_bounds(){
  ActionFrameBuffer held;ActionCapture running(7);require(held.push({scope,*running.snapshot(0),1,0})==ActionFramePush::accepted,"Held-state baseline");require(running.capture(ActionKind::sprint_start_from_step,1),"Held sprint source");
  require(held.push({scope,*running.snapshot(10),2,10})==ActionFramePush::accepted,"Sprint-start batch");require(held.push({scope,*running.snapshot(100),3,100})==ActionFramePush::accepted,"Repeated sprint snapshot");
  require(held.latest()->history.sprinting&&held.pending().size()==1&&held.pending()[0].arrival_ms==10,"Held sprint repeat recreated event or replaced first arrival");require(held.acknowledge(3)&&held.pending().empty()&&held.latest()->history.sprinting,"ACK cleared held sprint state");
+ ActionCapture guard(7);require(guard.capture(ActionKind::guard_enter,1),"Guard source");require(guard.offered(1),"Guard source offer");
+ for(std::uint32_t i=2;i<=7;++i){require(guard.capture(ActionKind::attack_combo1,i),"Rolling guarded attack");require(guard.offered(i),"Rolling guard source offer");}
+ const auto old_guard=*guard.snapshot(10);require(old_guard.guarding,"Guard lost when enter rolled out");
+ for(bool advance:{false,true}){
+  auto next=old_guard;
+  if(advance){require(guard.capture(ActionKind::stand_move_start,11),"Unrelated movement capture");next=*guard.snapshot(12);require(guard.offered(next.latest),"Movement offer");}
+  next.guarding=false;require(valid(next),"Rolling-state forgery must exercise cross-snapshot validator");
+  ActionFrameBuffer checked;require(checked.push({scope,old_guard,1,1000})==ActionFramePush::accepted,"Rolled-out initial guard baseline refused");
+  require(checked.push({scope,next,2,1100})==ActionFramePush::failed&&checked.fault()==ActionFault::invalid,"Guard flag flipped without source transition");
+ }
+ ActionFrameBuffer guard_releases;const auto last=*guard.snapshot(12);require(guard_releases.push({scope,last,1,1000})==ActionFramePush::accepted,"Guarded baseline");
+ require(guard.capture(ActionKind::guard_exit,13),"Guard release capture");const auto off=*guard.snapshot(14);
+ require(guard_releases.push({scope,off,2,1100})==ActionFramePush::accepted&&!guard_releases.latest()->history.guarding,"Real guard release refused");
+ require(guard_releases.push({scope,off,2,1100})==ActionFramePush::stale,"Duplicate guard release batch accepted twice");
 }
 void action_loopback(){
  auto t=ticket();const auto build=action_build();Peer host({Role::host,t,build,101},"127.0.0.1");wait([&]{return host.read().status.state==State::listening;});t.port=host.read().status.local_port;Peer guest({Role::guest,t,build,202});
@@ -164,7 +192,14 @@ void action_loopback(){
  };
  wait([&]{if(host.try_offer(ma))require(a.offered(ma.actions.latest),"Host offer watermark");if(guest.try_offer(mb))require(b.offered(mb.actions.latest),"Guest offer watermark");drain(host,at,seen_a);drain(guest,bt,seen_b);return seen_a.size()==2&&seen_b.size()==1;});
  require(seen_a[0]==mb.actions.events[0]&&seen_a[1]==mb.actions.events[1]&&seen_b[0]==ma.actions.events[0],"Actual socket actions were lost/duplicated/changed");
- for(unsigned i=0;i<10;++i){drain(host,at,seen_a);drain(guest,bt,seen_b);Sleep(5);}require(seen_a.size()==2&&seen_b.size()==1,"Repeated socket histories retriggered actions");guest.stop();host.stop();
+ for(unsigned i=0;i<10;++i){drain(host,at,seen_a);drain(guest,bt,seen_b);Sleep(5);}require(seen_a.size()==2&&seen_b.size()==1,"Repeated socket histories retriggered actions");
+ require(b.capture(ActionKind::guard_enter,3)&&b.capture(ActionKind::attack_combo1,4),"Socket guard/attack capture");const auto guarded=action_motion(b,5,2);
+ wait([&]{if(guest.try_offer(guarded))require(b.offered(guarded.actions.latest),"Guarded offer watermark");drain(host,at,seen_a);drain(guest,bt,seen_b);return seen_a.size()==4;});
+ require(at.held_guard()&&seen_a[2].kind==ActionKind::guard_enter&&seen_a[3].kind==ActionKind::attack_combo1,"Guard/attack delivery or persistent guard failed on socket");
+ require(b.capture(ActionKind::guard_exit,6),"Socket guard release capture");const auto released=action_motion(b,7,2);
+ wait([&]{if(guest.try_offer(released))require(b.offered(released.actions.latest),"Guard release watermark");drain(host,at,seen_a);drain(guest,bt,seen_b);return seen_a.size()==5;});
+ require(!at.held_guard()&&seen_a.back().kind==ActionKind::guard_exit,"Guard release did not cross authenticated socket");
+ guest.stop();host.stop();
  // A runtime that never acknowledges action batches fails visibly, rather
  // than having its unread event history overwritten in the socket worker.
  auto room=ticket();Peer sender({Role::host,room,build,303},"127.0.0.1");wait([&]{return sender.read().status.state==State::listening;});room.port=sender.read().status.local_port;Peer receiver({Role::guest,room,build,404});ActionCapture flood(7);const auto idle=action_motion(flood,0);
@@ -186,4 +221,4 @@ void loopback(){
  wait([&]{return x.read().status.state==State::failed;});require(x.read().status.failure==Failure::scene,"Loading change not reported");y.stop();x.stop();
 }
 }
-int main(){try{codec();state_machine();smoothing();independent_profiles();action_codec();action_envelopes_and_views();action_view_bounds();loopback();action_loopback();std::cout<<"PASS wire2 fixed action history, authenticated metadata, scope/replay/lifetime guards, bounded views and actual loopback actions\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{codec();state_machine();smoothing();independent_profiles();action_codec();action_envelopes_and_views();action_view_bounds();loopback();action_loopback();std::cout<<"PASS wire3 fixed action history, authenticated metadata, held guard, scope/replay/lifetime guards, bounded views and actual loopback actions\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

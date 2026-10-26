@@ -30,8 +30,14 @@ ActionSnapshot snap(ActionCapture& capture, std::uint32_t ms) {
 }
 void producer() {
     ActionCapture capture(7);
-    require(!valid(ActionKind::none) && !valid(static_cast<ActionKind>(11)));
+    require(!valid(ActionKind::none) && !valid(static_cast<ActionKind>(action_kind_count + 1)));
     require(valid(ActionKind::stand_move_start) && valid(ActionKind::land_ground_jump));
+    static_assert(action_kind_count == 20 && static_cast<unsigned>(ActionKind::attack_combo1) == 11);
+    for (std::size_t i = 1; i <= action_kind_count; ++i) require(valid(static_cast<ActionKind>(i)));
+    require(is_attack(ActionKind::attack_combo1) && is_attack(ActionKind::attack_combo2_release) && is_attack(ActionKind::attack_combo4));
+    require(is_guard_enter(ActionKind::guard_enter) && is_guard_enter(ActionKind::guard_enter2) && is_guard_enter(ActionKind::guard_enter3));
+    require(is_guard_exit(ActionKind::guard_exit) && is_combat(ActionKind::guard_exit) && !is_combat(ActionKind::ground_step));
+    require(!is_attack(ActionKind::guard_enter) && !is_guard_enter(ActionKind::guard_exit) && !is_combat(ActionKind::none));
     require(valid(snap(capture, 0)));
     // Four pulses all occur between the old 50 ms offer boundaries.
     for (std::uint32_t i = 1; i <= 4; ++i)
@@ -130,6 +136,80 @@ void sprint_state() {
     require(!timeline.held_sprint());
     const auto stop = timeline.take(1901);
     require(stop && stop->kind == ActionKind::sprint_stop_ready && !timeline.held_sprint());
+}
+void guard_state() {
+    ActionCapture source(7);
+    const auto initial = snap(source, 0);
+    auto invented = initial; invented.guarding = true; require(!valid(invented));
+    require(source.capture(ActionKind::attack_combo1, 1));
+    auto attack = snap(source, 1); attack.guarding = true; require(!valid(attack));
+    require(source.offered(attack.latest));
+    require(source.capture(ActionKind::guard_enter, 2));
+    auto pressed = snap(source, 2); require(pressed.guarding && !pressed.sprinting);
+    auto contradicted = pressed; contradicted.guarding = false; require(!valid(contradicted));
+    require(source.offered(pressed.latest));
+    for (std::uint32_t ms = 3; ms <= 9; ++ms) {
+        require(source.capture(ms % 2 ? ActionKind::stand_move_start : ActionKind::attack_combo2, ms));
+        const auto frame = snap(source, ms); require(frame.guarding && source.offered(frame.latest));
+    }
+    const auto rolled = snap(source, 10);
+    require(rolled.latest == 9 && rolled.count == 4 && rolled.guarding);
+    for (std::size_t i = 0; i < rolled.count; ++i) require(!is_guard_enter(rolled.events[i].kind));
+    // This catches a defective latest-event-only held-state reducer.
+    require(!is_guard_enter(rolled.events[rolled.count - 1].kind));
+    auto flipped = rolled; flipped.guarding = false;
+    require(valid(flipped) && !consistent_guard(rolled, flipped));
+    ActionTimeline repeat;
+    require(repeat.baseline(scope(), rolled, 1, 1000));
+    require(repeat.held_guard() && !repeat.take(1100));
+    require(repeat.push(scope(), flipped, 2, 1101) == ActionPush::failed);
+    require(repeat.fault() == ActionFault::invalid && !repeat.held_guard());
+
+    require(source.capture(ActionKind::attack_combo3, 11));
+    const auto advanced = snap(source, 12);
+    require(advanced.guarding && consistent_guard(rolled, advanced));
+    flipped = advanced; flipped.guarding = false;
+    require(valid(flipped) && !consistent_guard(rolled, flipped));
+    ActionTimeline baseline;
+    require(baseline.baseline(scope(), rolled, 1, 1000));
+    require(!baseline.baseline(scope(), flipped, 2, 1100) && baseline.fault() == ActionFault::invalid);
+    // Explicit rebaseline can skip an unknown old prefix, without replaying it.
+    ActionTimeline resume;
+    require(resume.baseline(scope(), initial, 1, 1000));
+    require(resume.baseline(scope(), advanced, 2, 1100));
+    require(resume.held_guard() && resume.pending() == 0 && !resume.take(1200));
+    resume.suspend(); require(!resume.held_guard());
+    require(resume.baseline(scope(), snap(source, 100), 3, 1250));
+    require(resume.held_guard() && resume.delivered() == 0 && !resume.take(1350));
+    require(!resume.take(1751) && !resume.held_guard() && !resume.armed());
+    require(source.offered(advanced.latest));
+    require(source.capture(ActionKind::guard_exit, 101));
+    const auto released = snap(source, 110); require(!released.guarding);
+    contradicted = released; contradicted.guarding = true; require(!valid(contradicted));
+    require(consistent_guard(advanced, released));
+
+    ActionCapture rapid(7); ActionTimeline pulses;
+    require(pulses.baseline(scope(), snap(rapid, 0), 1, 1000));
+    const std::array commands{ActionKind::guard_enter, ActionKind::guard_exit, ActionKind::guard_enter2, ActionKind::guard_exit};
+    for (std::size_t i = 0; i < commands.size(); ++i) require(rapid.capture(commands[i], static_cast<std::uint32_t>(i + 1)));
+    const auto taps = snap(rapid, 50); require(!taps.guarding);
+    require(pulses.push(scope(), taps, 2, 1050) == ActionPush::accepted);
+    for (const auto& event : taps.events) require(pulses.take(1104) == event);
+    require(!pulses.take(1104) && pulses.delivered() == 4);
+    require(pulses.push(scope(), taps, 2, 1050) == ActionPush::stale && !pulses.take(1200));
+
+    ActionCapture expired(7); require(expired.capture(ActionKind::guard_enter3, 1));
+    const auto held = snap(expired, 1); ActionTimeline latest_state;
+    require(latest_state.baseline(scope(), held, 1, 1000) && latest_state.held_guard());
+    require(expired.capture(ActionKind::guard_exit, 2));
+    require(latest_state.push(scope(), snap(expired, 253), 2, 1100) == ActionPush::accepted);
+    require(!latest_state.held_guard() && latest_state.pending() == 0 && latest_state.discarded() == 1);
+    require(!latest_state.take(1200)); // No expired guard/deflect edge is invented.
+
+    ActionCapture overflow(7);
+    for (const auto kind : {ActionKind::attack_combo1, ActionKind::attack_combo1_release, ActionKind::attack_combo2, ActionKind::attack_combo2_release})
+        require(overflow.capture(kind, 1));
+    require(!overflow.capture(ActionKind::attack_combo3, 2) && overflow.fault() == ActionFault::overflow);
 }
 void timeline() {
     ActionCapture capture(7);
@@ -271,7 +351,7 @@ void seeded_transport() {
         bool dropped_previous = false;
         for (std::uint32_t now = 1; now <= 4000; ++now) {
             if (now == next_action && now <= 3600) {
-                const auto kind = static_cast<ActionKind>(1 + random() % 10);
+                const auto kind = static_cast<ActionKind>(1 + random() % action_kind_count);
                 const auto direction = static_cast<float>(static_cast<int>(random() % 721) - 360);
                 require(capture.capture(kind, now, direction));
                 const auto current = snap(capture, now);
@@ -303,6 +383,7 @@ void seeded_transport() {
                 const auto& delivery = deliveries[next++];
                 const auto result = timeline.push(scope(), delivery.snapshot, delivery.sequence, now);
                 require(result == ActionPush::accepted || result == ActionPush::stale);
+                if (result == ActionPush::accepted) require(timeline.held_guard() == delivery.snapshot.guarding);
                 // Deliberately broken consumers of the same generated stream:
                 // one replays the latest trigger for every frame; the other
                 // coalesces all unseen events into the last trigger only.
@@ -318,6 +399,7 @@ void seeded_transport() {
         }
         require(next == deliveries.size());
         require(expected_trace(expected, actual));
+        require(timeline.held_guard() == snap(capture, 4000).guarding);
         require(!expected_trace(expected, repeat_defect));
         // Network loss can coalesce more than one event in one history. At
         // least one seed must demonstrate that a last-trigger-only consumer
@@ -342,7 +424,7 @@ void seeded_transport() {
 }
 int main() {
     try {
-        producer(); metadata(); sprint_state(); timeline(); pause_and_lifetime(); failures(); seeded_transport();
+        producer(); metadata(); sprint_state(); guard_state(); timeline(); pause_and_lifetime(); failures(); seeded_transport();
         std::cout << "PASS bounded sub-frame action capture, delayed at-most-once replay, scope/lifetime guards, "
                      "seeded loss/duplicate/reorder and defective-consumer detection\n";
         return 0;

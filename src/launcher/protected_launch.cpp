@@ -208,7 +208,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},independent_profile{};std::uint32_t lan_role{};std::string lan_code;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},independent_profile{},combat_preview{};std::uint32_t lan_role{};std::string lan_code;};
 Options options_from(const fs::path& config,const fs::path& runtime_root=executable_directory()) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -225,7 +225,8 @@ Options options_from(const fs::path& config,const fs::path& runtime_root=executa
     result.actor_locomotion_test=settings.actor_locomotion_test;
     result.actor_pad_reference_test=settings.actor_pad_reference_test;
     result.actor_graph_locomotion_test=settings.actor_graph_locomotion_test;
-    result.independent_profile=settings.independent_profile;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
+    result.independent_profile=settings.independent_profile;result.combat_preview=settings.combat_preview;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
+    if(result.combat_preview)require(result.lan_role==1&&lan::parse_ticket(result.lan_code)->address=="127.0.0.1","Combat preview requires a local host ticket");
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -337,7 +338,11 @@ std::string counters(const SharedStatus& s) {
         <<",\"discarded\":"<<load(s.action_discarded)<<",\"released\":"<<load(s.action_released)
         <<",\"ignored_sources\":"<<load(s.action_ignored_sources)<<",\"unsupported_source\":"<<load(s.action_unsupported_source)
         <<",\"jump_captured\":"<<load(s.action_jump_captured)<<",\"step_captured\":"<<load(s.action_step_captured)<<",\"sprint_captured\":"<<load(s.action_sprint_captured)
-        <<",\"jump_replayed\":"<<load(s.action_jump_replayed)<<",\"step_replayed\":"<<load(s.action_step_replayed)<<",\"sprint_replayed\":"<<load(s.action_sprint_replayed)<<"}}";
+        <<",\"jump_replayed\":"<<load(s.action_jump_replayed)<<",\"step_replayed\":"<<load(s.action_step_replayed)<<",\"sprint_replayed\":"<<load(s.action_sprint_replayed)
+        <<",\"guarding\":"<<load(s.action_guarding)<<",\"guard_rearm_required\":"<<load(s.action_guard_rearm_required)
+        <<",\"attack_captured\":"<<load(s.action_attack_captured)<<",\"attack_replayed\":"<<load(s.action_attack_replayed)
+        <<",\"guard_enter_captured\":"<<load(s.action_guard_enter_captured)<<",\"guard_exit_captured\":"<<load(s.action_guard_exit_captured)
+        <<",\"guard_enter_replayed\":"<<load(s.action_guard_enter_replayed)<<",\"guard_exit_replayed\":"<<load(s.action_guard_exit_replayed)<<"}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
@@ -381,7 +386,8 @@ LaunchStatus launch_snapshot(const SharedStatus& s,bool finished=false,bool comp
     return {load(s.phase)==static_cast<LONG>(Phase::ready),finished,completed,s.child_pid,static_cast<std::uint32_t>(load(s.hooks_mask)),
         static_cast<std::uint32_t>(load(s.actor_phase)),static_cast<std::uint32_t>(load(s.actor_error)),static_cast<std::uint32_t>(load(s.lan_state)),
         static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0,
-        static_cast<std::uint32_t>(load(s.action_error)),static_cast<std::uint64_t>(load(s.action_captured)),static_cast<std::uint64_t>(load(s.action_replayed))};
+        static_cast<std::uint32_t>(load(s.action_error)),static_cast<std::uint64_t>(load(s.action_captured)),static_cast<std::uint64_t>(load(s.action_replayed)),
+        load(s.action_guard_rearm_required)!=0,load(s.action_guarding)!=0};
 }
 int run(const Options& options, bool check_only,const LaunchObserver& observer={}) {
     require(!another_game(),"Close all existing Sekiro processes before starting this isolated harness");
@@ -522,8 +528,8 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             (options.actor_pad_reference_test?ActorTest::pad_reference:
             (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off)));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
-        if(options.actor_lan_test){payload.lan_role=options.lan_role;payload.lan_profile=options.independent_profile?1u:0u;std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
-            const auto& scenario=options.independent_profile?lan::independent_motion_scenario:primary.digest;std::copy(scenario.begin(),scenario.end(),payload.scenario_sha256);}
+        if(options.actor_lan_test){payload.lan_role=options.lan_role;payload.lan_profile=options.combat_preview?2u:(options.independent_profile?1u:0u);std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
+            const auto& scenario=options.combat_preview?lan::local_combat_scenario:(options.independent_profile?lan::independent_motion_scenario:primary.digest);std::copy(scenario.begin(),scenario.end(),payload.scenario_sha256);}
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);
         require(DuplicateHandle(GetCurrentProcess(),mapping.get(),child.process,&payload.mapping_handle,0,FALSE,DUPLICATE_SAME_ACCESS)&&
@@ -620,8 +626,9 @@ void copy_asset_tree(const fs::path& from,const fs::path& to,unsigned depth=0){
 std::string utf8(std::wstring_view text){const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);require(n>0,"Cannot encode setup path");std::string result(n,0);require(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),result.data(),n,nullptr,nullptr)==n,"Cannot encode setup path");return result;}
 
 } // namespace
-static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,std::string_view code,bool independent){
+static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,std::string_view code,bool independent,bool combat_preview=false){
     require((role==1||role==2)&&lan::parse_ticket(code).has_value(),"Invalid LAN role or room code");
+    require(!combat_preview||(independent&&role==1&&lan::parse_ticket(code)->address=="127.0.0.1"),"Combat preview requires a local host ticket");
     require(!another_game(),"Close Sekiro before preparing the protected LAN profile");
     Directory internal(normalized(fs::absolute(requested)));
     require(internal.path.wstring().size()+(independent?52:24)<MAX_PATH,"Extract the kit to a shorter local folder, for example C:\\SekiroCoopTeste");
@@ -669,7 +676,7 @@ static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,st
     else require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect graphics configuration");
     ensure_setup_directory(internal.path/L"config");ensure_setup_directory(internal.path/L"receipts");
     const auto config=internal.path/L"config"/ascii_wide("lan-"+id+".ini");
-    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\nactor_test=lan\nlan_role="+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(independent?"lan_profile=independent\n":"");
+    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\nactor_test=lan\nlan_role="+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(combat_preview?"lan_profile=combat-preview\n":(independent?"lan_profile=independent\n":""));
     (void)parse_launch_settings(settings);new_bytes(config,settings);
     require(primary.unchanged()&&backup.unchanged(),"Original saves changed during preparation");
     // Pinned original handles close on return. Launch revalidates every file,
@@ -680,8 +687,8 @@ std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::
     const auto config=prepare_lan_impl(requested,role,code,false);
     return quote_argument((fs::absolute(requested)/L"skcoop_launcher.exe").wstring())+L" --steam-start "+quote_argument(config.wstring())+L" %command%";
 }
-fs::path prepare_direct_lan(const fs::path& requested,std::uint32_t role,std::string_view code){
-    return prepare_lan_impl(requested,role,code,true);
+fs::path prepare_direct_lan(const fs::path& requested,std::uint32_t role,std::string_view code,bool combat_preview){
+    return prepare_lan_impl(requested,role,code,true,combat_preview);
 }
 int check_protected_launch(const fs::path& config) {return run(options_from(config),true);}
 int direct_protected_launch(const fs::path& config,const fs::path& runtime_directory,const LaunchObserver& observer) {

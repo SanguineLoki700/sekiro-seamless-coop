@@ -19,8 +19,29 @@ enum class ActionKind : std::uint8_t {
     ground_jump_ready,
     ground_jump_land_ready,
     land_ground_jump,
+    attack_combo1,
+    attack_combo1_release,
+    attack_combo2,
+    attack_combo2_release,
+    attack_combo3,
+    attack_combo4,
+    guard_enter,
+    guard_enter2,
+    guard_enter3,
+    guard_exit,
 };
 
+inline constexpr std::size_t action_kind_count = static_cast<std::size_t>(ActionKind::guard_exit);
+inline constexpr bool is_attack(ActionKind kind) noexcept {
+    return kind >= ActionKind::attack_combo1 && kind <= ActionKind::attack_combo4;
+}
+inline constexpr bool is_guard_enter(ActionKind kind) noexcept {
+    return kind >= ActionKind::guard_enter && kind <= ActionKind::guard_enter3;
+}
+inline constexpr bool is_guard_exit(ActionKind kind) noexcept { return kind == ActionKind::guard_exit; }
+inline constexpr bool is_combat(ActionKind kind) noexcept {
+    return is_attack(kind) || is_guard_enter(kind) || is_guard_exit(kind);
+}
 inline constexpr std::size_t action_history_capacity = 4;
 inline constexpr std::size_t action_queue_capacity = 16;
 inline constexpr std::uint64_t action_delay_ms = 100;
@@ -41,6 +62,7 @@ struct ActionSnapshot {
     std::uint32_t source_ms{};
     std::uint8_t count{};
     bool sprinting{}; // Held state; survives baseline without replaying a start event.
+    bool guarding{}; // Persists across unrelated actions and rolled-out guard entries.
     std::array<ActionEvent, action_history_capacity> events{};
     bool operator==(const ActionSnapshot&) const = default;
 };
@@ -66,6 +88,9 @@ enum class ActionFault {
 bool valid(ActionKind) noexcept;
 bool valid(const ActionSnapshot&) noexcept;
 bool valid(const ActionScope&) noexcept;
+// Validate held guard against the previous snapshot whenever all new events
+// are retained. A baseline may intentionally skip a larger missing prefix.
+bool consistent_guard(const ActionSnapshot& previous, const ActionSnapshot& next) noexcept;
 
 // Single source-thread producer. Call capture for every observed event, before
 // throttling offers. The four records persist across snapshots. A record may
@@ -109,6 +134,9 @@ public:
     // Latest received held state, gated by explicit suspend/fault/freshness.
     // This is metadata for native state restoration, not an action request.
     bool held_sprint() const noexcept { return armed_ && fault_ == ActionFault::none && known_.sprinting; }
+    // Metadata only. A native adapter must not turn this into a new deflect
+    // entry on resume without an independently verified neutral restore path.
+    bool held_guard() const noexcept { return armed_ && fault_ == ActionFault::none && known_.guarding; }
     ActionFault fault() const noexcept { return fault_; }
     std::size_t pending() const noexcept { return count_; }
     std::uint64_t seen_serial() const noexcept { return known_.latest; }

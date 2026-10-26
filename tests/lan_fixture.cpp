@@ -23,7 +23,7 @@ int wmain(int argc,wchar_t** argv){try{if(argc!=3&&argc!=4)return 2;
  if(!digest(game,c.build.game)||!digest(scenario,c.build.scenario))return 2;
  if(independent){if(c.build.scenario!=independent_motion_scenario)return 2;c.build.adapter=independent_adapter;}
  Peer peer(c);const auto start=GetTickCount64();std::uint64_t first{},first_origin_at{},frames{},fresh{};Motion origin;Status status;
- Motion separated;std::array<std::uint64_t,11> seen{};
+ Motion separated;std::array<std::uint64_t,action_kind_count+1> seen{};
  const std::uint64_t duration=mirror?90000:45000;
  bool failed=false,origin_captured=false,source_changed=false;
  while(GetTickCount64()-start<(mirror?360000u:150000u)){const auto now=GetTickCount64();const auto view=peer.read();status=view.status;

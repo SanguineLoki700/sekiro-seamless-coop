@@ -18,10 +18,11 @@ struct LaunchStatus {
     bool paused{};
     std::uint32_t action_error{};
     std::uint64_t actions_captured{},actions_replayed{};
+    bool guard_rearm{},guarding{};
 };
 using LaunchObserver=std::function<void(const LaunchStatus&)>;
 int direct_protected_launch(const std::filesystem::path& config,const std::filesystem::path& runtime_directory={},const LaunchObserver& observer={});
-std::filesystem::path prepare_direct_lan(const std::filesystem::path& internal_directory,std::uint32_t role,std::string_view code);
+std::filesystem::path prepare_direct_lan(const std::filesystem::path& internal_directory,std::uint32_t role,std::string_view code,bool combat_preview=false);
 // Creates a new private profile and a controlled LAN config, never overwrites
 // a save, never edits Steam settings and never starts the game.
 std::wstring prepare_lan_test(const std::filesystem::path& internal_directory,

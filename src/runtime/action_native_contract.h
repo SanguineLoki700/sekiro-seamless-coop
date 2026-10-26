@@ -4,8 +4,9 @@
 #include <string_view>
 
 namespace skcoop::actors {
-// Names and IDs were independently resolved in the supported source/guest
-// assets. Never accept native IDs, pointers or arbitrary names from a peer.
+// Observed names/IDs from the supported source assets. Resolve and independently
+// check every destination binding at runtime before enqueueing. Never accept
+// native IDs, pointers or arbitrary names from a peer.
 struct ActionBinding {
     lan::ActionKind kind;
     const char* source_name;
@@ -26,6 +27,16 @@ inline constexpr std::array action_bindings{
     ActionBinding{lan::ActionKind::ground_jump_ready,"W_GroundJumpReady",988,"W_GroundJumpStart",989},
     ActionBinding{lan::ActionKind::ground_jump_land_ready,"W_GroundJumpLandReady",4185,"W_GroundJumpLandReady",4185},
     ActionBinding{lan::ActionKind::land_ground_jump,"W_LandGroundJump",1223,"W_LandGroundJump",1223},
+    ActionBinding{lan::ActionKind::attack_combo1,"W_GroundAttackCombo1",3544,"W_GroundAttackCombo1",3544},
+    ActionBinding{lan::ActionKind::attack_combo1_release,"W_GroundAttackCombo1Release",3545,"W_GroundAttackCombo1Release",3545},
+    ActionBinding{lan::ActionKind::attack_combo2,"W_GroundAttackCombo2",3546,"W_GroundAttackCombo2",3546},
+    ActionBinding{lan::ActionKind::attack_combo2_release,"W_GroundAttackCombo2Release",3547,"W_GroundAttackCombo2Release",3547},
+    ActionBinding{lan::ActionKind::attack_combo3,"W_GroundAttackCombo3",3548,"W_GroundAttackCombo3",3548},
+    ActionBinding{lan::ActionKind::attack_combo4,"W_GroundAttackCombo4",3884,"W_GroundAttackCombo4",3884},
+    ActionBinding{lan::ActionKind::guard_enter,"W_StandToDeflectGuard",1416,"W_StandToDeflectGuard",1416},
+    ActionBinding{lan::ActionKind::guard_enter2,"W_StandToDeflectGuard2",3684,"W_StandToDeflectGuard2",3684},
+    ActionBinding{lan::ActionKind::guard_enter3,"W_StandToDeflectGuard3",3685,"W_StandToDeflectGuard3",3685},
+    ActionBinding{lan::ActionKind::guard_exit,"W_DeflectGuardToStand",631,"W_DeflectGuardToStand",631},
 };
 inline const ActionBinding* action_binding(std::string_view name) noexcept {
     for (const auto& binding : action_bindings) if (name == binding.source_name) return &binding;

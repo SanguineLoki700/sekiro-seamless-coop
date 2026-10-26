@@ -44,6 +44,7 @@ public:
     bool restored() const noexcept { return restored_; }
     bool active() const noexcept { return active_ && timeline_.armed(); }
     bool held_sprint() const noexcept { return active() && timeline_.held_sprint(); }
+    bool held_guard() const noexcept { return active() && timeline_.held_guard(); }
     std::size_t pending() const noexcept { return timeline_.pending(); }
     std::uint64_t acknowledgement() const noexcept { return ack_; }
     std::uint64_t discarded() const noexcept { return baseline_discarded_ + timeline_.discarded(); }
