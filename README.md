@@ -12,7 +12,7 @@ A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md), fei
 
 **Assistente LAN simplificado:** botões [Criar jogo / Entrar](docs/LAN_TEST.md), descoberta automática na rede e perfil de teste separado por conta. O primeiro movimento entre PC e notebook foi confirmado usando esse fluxo, sem novas linhas nas propriedades da Steam. O percentual continua em 10%, pois este teste parcial não aceita sozinho os critérios completos.
 
-**Incremento experimental em preparação:** [corrida, salto e esquiva](docs/ACTION_TEST.md) têm captura, transporte e aplicação implementados no código. A integração C++ ainda precisa de teste no jogo e nos dois computadores; o pacote público anterior permanece como a referência de movimento já observada.
+**Incremento experimental de ações:** o [teste local com um PC](docs/validation/local-actions-2026-10-26.md) confirmou visualmente corrida e salto do segundo personagem usando a integração C++. A esquiva teve comando capturado e enfileirado, mas ainda precisa de confirmação visual. Os [testes de ações](docs/ACTION_TEST.md) entre dois jogos continuam pendentes; o pacote público anterior permanece como a referência de movimento já observada.
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 

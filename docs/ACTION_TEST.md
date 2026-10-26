@@ -5,6 +5,12 @@ A compilação e os testes independentes não confirmam ainda essas ações entr
 dois jogos reais. O movimento LAN anterior já teve caminhada, giro e parada
 confirmados pelo participante nos dois computadores. O progresso permanece 10%.
 
+Na integração C++, o [teste local de 2026-10-26](validation/local-actions-2026-10-26.md)
+já teve corrida e salto confirmados visualmente no segundo personagem, com
+encerramento normal e saves pessoais preservados no PC. A esquiva teve comando
+capturado e enfileirado, sem confirmação visual. Foi um jogo com parceiro
+simulado; os dois jogos reais ainda precisam ser testados.
+
 ## Caminho implementado
 
 A DLL observa os comandos originais do grafo do jogador após sua execução,
@@ -53,7 +59,8 @@ Uma experiência separada enfileirou o início de salto no personagem adicional,
 com variáveis pertencentes a ele. A posição vertical subiu cerca de 1,975 unidade
 e retornou ao ponto inicial, sem correção de pose nessa experiência, sem escrita
 no jogador original e sem erro registrado. O participante não confirmou ver o
-salto; portanto, a animação visual continua pendente. O evento de preparação
+salto naquele ensaio; a confirmação visual posterior pertence ao teste C++
+com correções de pose descrito no relatório acima. O evento de preparação
 observado na origem é normalizado para esse início no destino. Não há pouso
 fabricado por temporizador: os eventos de pouso vêm da origem.
 
@@ -72,10 +79,11 @@ registros brutos e saves permanecem privados.
 
 ## Verificação necessária
 
-1. No PC protegido, confirmar carregamento dos novos hooks e captura C++ de
-   corrida, salto e esquiva, com contagens por ação, sem erro e com saída normal.
-2. Confirmar aplicação no ator adicional, inclusive animação de salto e pouso;
-   uma fixture de desenvolvimento continua sendo apenas um jogo real.
+1. Captura C++ de corrida, salto e esquiva no PC: observada com contagens por
+   ação, sem erro e com saída normal; resultado registrado no relatório local.
+2. Corrida e salto visuais do ator adicional: confirmados no teste local.
+   Esquiva visual e pouso como transição específica continuam pendentes; uma
+   fixture de desenvolvimento continua sendo apenas um jogo real.
 3. Atualizar o notebook e verificar cada ação nos dois sentidos, além de pausa,
    parada e saída. Recolher recibos e preservação dos saves dos dois clientes.
 
