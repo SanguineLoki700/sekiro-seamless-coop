@@ -9,18 +9,22 @@ class ActionReceiver {
 public:
     void observe(const lan::ActionFrameBuffer& frames, bool following,
                  std::uint64_t now) noexcept {
-        restored_ = false;
+        restored_ = rebaselined_ = false;
         if (fault() != lan::ActionFault::none) return;
         if (frames.fault() != lan::ActionFault::none) { fail(frames.fault()); return; }
+        if (frames.baseline_generation() < baseline_generation_) { fail(lan::ActionFault::invalid); return; }
+        const bool rebaseline = frames.baseline_generation() > baseline_generation_;
         const auto& latest = frames.latest();
         if (!latest) { suspend(); return; }
         if (now < latest->arrival_ms) { fail(lan::ActionFault::clock_regressed); return; }
         following = following && now - latest->arrival_ms <= lan::action_frame_expiry_ms;
-        if (!following || !active_ || !timeline_.armed()) {
+        if (rebaseline || !following || !active_ || !timeline_.armed()) {
             const auto before = timeline_.seen_serial();
             if (!timeline_.baseline(latest->scope, latest->history,
                                     latest->packet_sequence, latest->arrival_ms)) return;
             baseline_discarded_ += latest->history.latest - before;
+            baseline_generation_ = frames.baseline_generation();
+            rebaselined_ = rebaseline;
             ack_ = std::max(ack_, latest->packet_sequence);
             active_ = restored_ = following;
             if (!following) timeline_.suspend();
@@ -40,8 +44,12 @@ public:
         if (!timeline_.armed()) active_ = false;
         return result;
     }
-    void suspend() noexcept { timeline_.suspend(); active_ = restored_ = false; }
+    void suspend() noexcept { timeline_.suspend(); active_ = restored_ = rebaselined_ = false; }
     bool restored() const noexcept { return restored_; }
+    // An expiry may occur wholly between world callbacks. Release previously
+    // owned native inputs before consuming any state from this new baseline.
+    // Held guard remains metadata; this flag never requests a new guard entry.
+    bool rebaselined() const noexcept { return rebaselined_; }
     bool active() const noexcept { return active_ && timeline_.armed(); }
     bool held_sprint() const noexcept { return active() && timeline_.held_sprint(); }
     bool held_guard() const noexcept { return active() && timeline_.held_guard(); }
@@ -53,9 +61,9 @@ public:
     }
 private:
     lan::ActionTimeline timeline_;
-    std::uint64_t ack_{}, baseline_discarded_{};
+    std::uint64_t ack_{}, baseline_discarded_{}, baseline_generation_{};
     lan::ActionFault fault_{};
-    bool active_{}, restored_{};
+    bool active_{}, restored_{}, rebaselined_{};
     void fail(lan::ActionFault fault) noexcept { fault_ = fault; suspend(); }
 };
 }

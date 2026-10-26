@@ -26,7 +26,7 @@ ActionFramePush ActionFrameBuffer::push(const ActionFrame& frame)noexcept{
  if(!valid(frame.scope)||!valid(frame.history)||frame.scope.epoch!=frame.history.epoch||!frame.packet_sequence)
   return fail(ActionFault::invalid);
  if(frame.arrival_ms>std::numeric_limits<std::uint64_t>::max()-action_delay_ms)return fail(ActionFault::clock_regressed);
- bool changed=frame.history.latest>0;
+ bool changed=frame.history.latest>0,expired=false;
  if(latest_){
   const auto& old=*latest_;
   if(frame.scope!=old.scope)return fail(ActionFault::scope_changed);
@@ -36,8 +36,13 @@ ActionFramePush ActionFrameBuffer::push(const ActionFrame& frame)noexcept{
   for(std::size_t i=0;i<old.history.count;++i)for(std::size_t j=0;j<frame.history.count;++j)
    if(old.history.events[i].serial==frame.history.events[j].serial&&old.history.events[i]!=frame.history.events[j])return fail(ActionFault::invalid);
   if(!consistent_guard(old.history,frame.history))return fail(ActionFault::invalid);
+  expired=frame.arrival_ms-old.arrival_ms>action_frame_expiry_ms;
   changed=frame.history.latest>old.history.latest;
-  if(changed&&frame.history.events[0].serial>old.history.latest+1)return fail(ActionFault::gap);
+  if(changed&&frame.history.events[0].serial>old.history.latest+1&&!expired)return fail(ActionFault::gap);
+ }
+ if(expired){
+  if(baseline_generation_==std::numeric_limits<std::uint64_t>::max())return fail(ActionFault::serial_exhausted);
+  ++baseline_generation_;count_=0;pending_.fill({});
  }
  if(changed){if(count_==pending_.size())return fail(ActionFault::overflow);pending_[count_++]=frame;}
  latest_=frame;return ActionFramePush::accepted;

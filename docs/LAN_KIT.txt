@@ -10,7 +10,13 @@ Pressione F8, espere 2 segundos e ande poucos passos. Quando o segundo
 personagem aparecer, espere 3 segundos e confira golpes e defesa, depois solte.
 O parceiro simulado ja faz parte do assistente. O limite e de 90 segundos
 e 6 metros de trajeto; isso nao e um segundo jogo nem validacao de dano.
+Sair da area pausa o parceiro. Volte para onde voce estava quando ele apareceu
+e espere 2 segundos para retomar, sem repetir F8. O tempo continua correndo.
+Os golpes acumulados durante a pausa sao descartados.
 Se pausar enquanto defende, solte e aperte a defesa novamente ao retomar.
+Ataques ja apareceram no teste local. A defesa segurada ainda nao funciona;
+esta versao reproduz o toque, e a sustentacao continua em investigacao.
+O assistente salva a causa das pausas e paradas junto aos registros da abertura.
 Feche o jogo pelo menu quando terminar.
 
 1. Deixe a Steam aberta, cada computador na sua propria conta com Sekiro.

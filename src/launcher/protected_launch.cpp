@@ -382,12 +382,12 @@ void wait_foreign_close(Receipt& receipt,DWORD own_pid,bool& detected,bool& moni
         Sleep(500);
     }
 }
-LaunchStatus launch_snapshot(const SharedStatus& s,bool finished=false,bool completed=false) {
+LaunchStatus launch_snapshot(const SharedStatus& s,std::string_view receipt_name,bool finished=false,bool completed=false) {
     return {load(s.phase)==static_cast<LONG>(Phase::ready),finished,completed,s.child_pid,static_cast<std::uint32_t>(load(s.hooks_mask)),
         static_cast<std::uint32_t>(load(s.actor_phase)),static_cast<std::uint32_t>(load(s.actor_error)),static_cast<std::uint32_t>(load(s.lan_state)),
         static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0,
         static_cast<std::uint32_t>(load(s.action_error)),static_cast<std::uint64_t>(load(s.action_captured)),static_cast<std::uint64_t>(load(s.action_replayed)),
-        load(s.action_guard_rearm_required)!=0,load(s.action_guarding)!=0};
+        load(s.action_guard_rearm_required)!=0,load(s.action_guarding)!=0,std::string(receipt_name)};
 }
 int run(const Options& options, bool check_only,const LaunchObserver& observer={}) {
     require(!another_game(),"Close all existing Sekiro processes before starting this isolated harness");
@@ -483,6 +483,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
     std::array<std::uint8_t,16> nonce{};
     require(BCryptGenRandom(nullptr,nonce.data(),static_cast<ULONG>(nonce.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0,"Cannot generate handshake nonce");
     Receipt receipt(output,nonce);
+    const auto receipt_name="game-test-"+hex(nonce)+".jsonl";
     receipt.emit("{\"event\":\"prepared\",\"protocol\":"+std::to_string(protocol_version)+",\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
         ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+primary.json_digest()+",\"solo_backup_before\":"+backup.json_digest()+",\"solo_primary_present\":"+(primary.present()?"true":"false")+",\"solo_backup_present\":"+(backup.present()?"true":"false")+
         ",\"solo_handles_share_mode\":"+std::string(primary.present()&&backup.present()?"0":"null")+",\"missing_originals_monitored\":"+(!primary.present()||!backup.present()?"true":"false")+",\"original_saves_created\":false}");
@@ -545,7 +546,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             "READY signal did not contain a matching successful bootstrap receipt");
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
-        if(observer)observer(launch_snapshot(*shared));
+        if(observer)observer(launch_snapshot(*shared,receipt_name));
         ULONGLONG actor_report_at{};std::array<LONG,8> previous_signal{};
         bool actor_samples_full{};
         for(;;) {
@@ -555,7 +556,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
-            if(observer)observer(launch_snapshot(*shared));
+            if(observer)observer(launch_snapshot(*shared,receipt_name));
             const std::array<LONG,8> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error),load(shared->action_error)};
             if(options.actor_follow_test && !actor_samples_full && (GetTickCount64()-actor_report_at>=(options.independent_profile?30000u:1000u)||signal!=previous_signal)) {
                 previous_signal=signal;
@@ -580,7 +581,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         ",\"foreign_game_observed\":"+(foreign_detected?"true":"false")+",\"foreign_monitor_error\":"+(monitor_error?"true":"false")+",\"solo_primary_unchanged\":"+(primary_unchanged?"true":"false")+
         ",\"solo_backup_unchanged\":"+(backup_unchanged?"true":"false")+",\"graphics_unchanged\":"+(graphics_unchanged?"true":"false")+",\"solo_primary_after\":"+primary.json_digest()+
         ",\"solo_backup_after\":"+backup.json_digest()+",\"native\":"+counters(*shared)+",\"failure\":"+quote(failure)+"}");
-    if(observer)observer(launch_snapshot(*shared,true,completed));
+    if(observer)observer(launch_snapshot(*shared,receipt_name,true,completed));
     final_protection.active=false;
     return completed?0:40;
 }

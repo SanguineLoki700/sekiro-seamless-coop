@@ -50,6 +50,65 @@ void idle_and_overflow(){
     require(unconsumed.frames.push({scope(),*history,17,1017})==ActionFramePush::failed);
     ActionReceiver bad;bad.observe(unconsumed.frames,true,1017);require(bad.fault()==ActionFault::overflow&&!bad.active());
 }
+void expired_rebaseline(){
+    Stream s;ActionReceiver receiver;
+    s.offer(0,1000);receiver.observe(s.frames,true,1000);s.acknowledge(receiver);
+    require(!receiver.rebaselined());
+    s.event(ActionKind::guard_enter,1);s.offer(1,1001);receiver.observe(s.frames,true,1001);s.acknowledge(receiver);
+    require(receiver.take(1101)->kind==ActionKind::guard_enter&&receiver.held_guard());
+    // Retain a queued attack, then let source events advance while the helper
+    // offers no frames. The world never observes an inactive/stale callback.
+    s.event(ActionKind::attack_combo1,2);s.offer(2,1002);receiver.observe(s.frames,true,1101);s.acknowledge(receiver);
+    require(receiver.pending()==1);
+    for(std::uint32_t i=3;i<=10;++i){s.event(ActionKind::attack_combo2,i);require(s.source.offered(i));}
+    s.offer(1102,2102);require(s.frames.baseline_generation()==1);
+    receiver.observe(s.frames,true,2102);s.acknowledge(receiver);
+    require(receiver.rebaselined()&&receiver.restored()&&receiver.active()&&receiver.held_guard());
+    require(receiver.pending()==0&&!receiver.take(2202)&&receiver.fault()==ActionFault::none);
+    // The held flag is metadata only; neither old guard nor queued attacks
+    // become a new native edge. The flag itself lasts exactly one observation.
+    receiver.observe(s.frames,true,2202);require(!receiver.rebaselined()&&!receiver.restored());
+    require(receiver.held_guard()&&!receiver.take(2202));
+    s.event(ActionKind::guard_exit,1112);s.offer(1112,2112);receiver.observe(s.frames,true,2202);s.acknowledge(receiver);
+    require(!receiver.rebaselined()&&!receiver.held_guard());
+    require(receiver.take(2212)->kind==ActionKind::guard_exit&&!receiver.take(2212));
+    // Duplicate/reordered frames cannot refresh freshness or cause a baseline.
+    const auto duplicate=*s.frames.latest();require(s.frames.push(duplicate)==ActionFramePush::stale);
+    auto reordered=duplicate;--reordered.packet_sequence;reordered.arrival_ms=4000;
+    require(s.frames.push(reordered)==ActionFramePush::stale&&s.frames.baseline_generation()==1);
+    receiver.observe(s.frames,true,2212);require(!receiver.rebaselined()&&!receiver.take(2212));
+
+    // An explicit inactive callback and an unseen expiry have the same no-replay
+    // result, including when the source guard exits and re-enters while paused.
+    receiver.observe(s.frames,false,2213);require(!receiver.held_guard()&&!receiver.rebaselined());
+    s.event(ActionKind::guard_enter2,1113);require(s.source.offered(12));
+    for(std::uint32_t i=13;i<=20;++i){s.event(ActionKind::attack_combo3,1101+i);require(s.source.offered(i));}
+    s.offer(2212,3212);receiver.observe(s.frames,false,3212);s.acknowledge(receiver);
+    require(receiver.rebaselined()&&!receiver.active()&&!receiver.held_guard()&&!receiver.take(3212));
+    receiver.observe(s.frames,true,3213);require(!receiver.rebaselined()&&receiver.restored()&&receiver.held_guard());
+    require(!receiver.take(3313)&&receiver.fault()==ActionFault::none);
+}
+void short_pause_and_generation_contract(){
+    Stream short_pause;ActionReceiver receiver;short_pause.offer(0,1000);receiver.observe(short_pause.frames,true,1000);short_pause.acknowledge(receiver);
+    short_pause.event(ActionKind::ground_step,1);short_pause.offer(1,1500);
+    require(short_pause.frames.baseline_generation()==0);receiver.observe(short_pause.frames,true,1500);short_pause.acknowledge(receiver);
+    require(!receiver.rebaselined()&&!receiver.restored()&&receiver.take(1600)->kind==ActionKind::ground_step);
+    // Exactly the expiry boundary still requires a complete source suffix.
+    Stream gap;gap.offer(0,1000);
+    for(std::uint32_t i=1;i<=8;++i){gap.event(ActionKind::attack_combo1,i);require(gap.source.offered(i));}
+    require(gap.frames.push({scope(),*gap.source.snapshot(8),2,1500})==ActionFramePush::failed&&gap.frames.fault()==ActionFault::gap);
+    // A copied older internal generation must not rearm an already rebound
+    // receiver, even though its authenticated scope is otherwise identical.
+    Stream generations;generations.offer(0,1000);const auto old=generations.frames;
+    ActionReceiver checked;checked.observe(generations.frames,true,1000);
+    generations.offer(501,1501);checked.observe(generations.frames,true,1501);require(checked.rebaselined());
+    checked.observe(old,true,1502);require(checked.fault()==ActionFault::invalid&&!checked.active()&&!checked.rebaselined());
+    // Receiving the first world callback after multiple wire-side baselines is
+    // safe too: all retained history is discarded, even with guard held.
+    Stream first;first.event(ActionKind::guard_enter3,1);first.offer(1,1000);
+    first.offer(600,1600);first.offer(1200,2200);ActionReceiver late;late.observe(first.frames,true,2200);
+    require(first.frames.baseline_generation()==2&&late.rebaselined()&&late.held_guard()&&!late.take(2300));
+}
 void contracts(){
     require(valid_event_queue(8,0,0)&&valid_event_queue(8,8,7));
     require(!valid_event_queue(0,0,0)&&!valid_event_queue(4097,0,0)&&!valid_event_queue(8,-1,0)&&
@@ -66,6 +125,6 @@ void contracts(){
     receiver.observe(s.frames,true,1001);require(receiver.fault()==ActionFault::scope_changed&&!receiver.take(1101));
 }
 }
-int main(){try{lifecycle();idle_and_overflow();contracts();
-    std::cout<<"PASS native action hand-off policy, idle discard, pause/stale baselines, held state and whitelist\n";return 0;
+int main(){try{lifecycle();idle_and_overflow();expired_rebaseline();short_pause_and_generation_contract();contracts();
+    std::cout<<"PASS native action hand-off policy, expiry generations, idle discard, pause/stale baselines, held state and whitelist\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -1,6 +1,7 @@
 #pragma once
 #include "skcoop/lan/peer.hpp"
 #include <memory>
+#include <string_view>
 namespace skcoop::lan {
 // One real game plus a loopback command mirror. These states never constitute
 // proof of a second game, native physics, damage or authoritative combat.
@@ -9,11 +10,17 @@ enum class LocalPreviewPhase {
     stale_source,source_ended,failed,stopped
 };
 bool finished(LocalPreviewPhase) noexcept;
+std::string_view local_preview_phase_name(LocalPreviewPhase) noexcept;
+// The peer may repeat its previous offer for 500 ms. Leave enough silence
+// after a path pause for that offer and the receiver's 500-ms freshness lease
+// to expire before handing off a fresh baseline. No old pose is refreshed.
+inline constexpr std::uint64_t local_preview_resume_delay_ms=1100;
 struct LocalPreviewStatus {
     LocalPreviewPhase phase{LocalPreviewPhase::starting};
     Failure failure{};
     ActionFault action_fault{};
     std::uint64_t sent{},received{},offers{},mirrored_serial{};
+    std::uint64_t elapsed_ms{},path_pauses{},stale_pauses{};
 };
 struct LocalPreviewStep {
     std::optional<Motion> motion;
@@ -29,6 +36,7 @@ public:
 private:
     LocalPreviewPhase phase_{LocalPreviewPhase::waiting_frame};
     std::uint64_t start_{},checked_{},active_at_{};
+    std::optional<std::uint64_t> path_paused_at_;
     std::optional<Motion> origin_,separated_;
     std::optional<ActionScope> scope_;
 };

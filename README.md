@@ -14,7 +14,7 @@ A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md), fei
 
 **Incremento experimental de ações:** o [teste local com um PC](docs/validation/local-actions-2026-10-26.md) confirmou visualmente corrida, salto e esquiva do segundo personagem usando a integração C++, com saída normal e saves pessoais preservados. Os [testes de ações](docs/ACTION_TEST.md) entre dois jogos continuam pendentes; o pacote público anterior permanece como a referência de movimento já observada.
 
-**Próximo candidato local:** [ataques e defesa](docs/COMBAT_PREVIEW.md) têm um botão de teste integrado ao assistente, sem notebook ou auxiliar externo. Os eventos foram observados no jogador original; sua reprodução visual no personagem adicional ainda está pendente. Acertos, dano e postura compartilhados ficam para a etapa seguinte.
+**Candidato local:** [ataques e defesa](docs/COMBAT_PREVIEW.md) têm um botão de teste integrado ao assistente, sem notebook ou auxiliar externo. O participante confirmou os ataques no personagem adicional; a defesa ainda produz apenas um toque, sem sustentação. A parada prematura veio do limite de trajeto do teste; a correção permite pausar e retomar ao voltar à área e passou nos testes independentes. Acertos, dano e postura compartilhados continuam pendentes.
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 

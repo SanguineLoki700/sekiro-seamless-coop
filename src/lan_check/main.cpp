@@ -20,6 +20,56 @@ std::unique_ptr<Discovery> browser,advertiser;std::vector<Room> rooms;
 std::thread job;std::atomic<bool> done{};bool busy{};unsigned role{};Ticket active_ticket;
 std::mutex state_mutex;skcoop::launcher::LaunchStatus launch_state;std::wstring job_error;
 LocalPreviewStatus preview_state;
+bool preview_receipt_failed{};
+// The launcher's directory chain remains pinned while this observer first
+// opens the companion. Subsequent writes use that same exclusive new handle,
+// including the final write after the launcher has released its directory pins.
+class PreviewReceipt {
+ fs::path folder_;HANDLE handle_{INVALID_HANDLE_VALUE};std::string native_receipt_;
+ bool failed_{},written_{};std::uint64_t last_at_{},records_{};
+ LocalPreviewPhase previous_{LocalPreviewPhase::starting};
+ static bool valid_name(std::string_view name){
+  constexpr std::string_view prefix="game-test-",suffix=".jsonl";
+  if(name.size()!=prefix.size()+32+suffix.size()||!name.starts_with(prefix)||!name.ends_with(suffix))return false;
+  for(const auto c:name.substr(prefix.size(),32))if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return false;
+  return true;
+ }
+public:
+ explicit PreviewReceipt(fs::path folder):folder_(std::move(folder)){}
+ ~PreviewReceipt(){if(handle_!=INVALID_HANDLE_VALUE)CloseHandle(handle_);}
+ bool failed()const noexcept{return failed_;}
+ void observe(const skcoop::launcher::LaunchStatus& game,const LocalPreviewStatus& local,bool final=false)noexcept{
+  if(failed_)return;
+  try{
+   if(game.receipt_name.empty())return;
+   if(!valid_name(game.receipt_name)){failed_=true;return;}
+   if(handle_==INVALID_HANDLE_VALUE){
+    native_receipt_=game.receipt_name;
+    const auto path=folder_/fs::path(native_receipt_+".preview.jsonl");
+    handle_=CreateFileW(path.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(handle_==INVALID_HANDLE_VALUE){failed_=true;return;}
+    BY_HANDLE_FILE_INFORMATION info{};
+    if(!GetFileInformationByHandle(handle_,&info)||(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))){failed_=true;return;}
+   }else if(native_receipt_!=game.receipt_name){failed_=true;return;}
+   const auto now=GetTickCount64();
+   if(!final&&written_&&local.phase==previous_&&now-last_at_<5000)return;
+   if(!final&&records_>=256&&!(finished(local.phase)&&(!written_||local.phase!=previous_)))return;
+   // Terminal cause and final counters keep reserved records after samples fill.
+   std::ostringstream out;out<<"{\"event\":\""<<(final?"final":"snapshot")<<"\",\"native_receipt\":\""<<native_receipt_
+    <<"\",\"phase\":\""<<local_preview_phase_name(local.phase)<<"\",\"previous_phase\":\""<<local_preview_phase_name(previous_)
+    <<"\",\"end_cause\":\""<<(finished(local.phase)?local_preview_phase_name(local.phase):"none")
+    <<"\",\"elapsed_ms\":"<<local.elapsed_ms<<",\"failure\":"<<static_cast<unsigned>(local.failure)
+    <<",\"action_fault\":"<<static_cast<unsigned>(local.action_fault)<<",\"frames_sent\":"<<local.sent
+    <<",\"frames_received\":"<<local.received<<",\"offers\":"<<local.offers<<",\"mirrored_serial\":"<<local.mirrored_serial
+    <<",\"path_pauses\":"<<local.path_pauses<<",\"stale_pauses\":"<<local.stale_pauses
+    <<",\"child_pid\":"<<game.pid<<",\"game_finished\":"<<(game.finished?"true":"false")
+    <<",\"game_completed\":"<<(game.completed?"true":"false")<<"}\n";
+   const auto line=out.str();DWORD count{};
+   if(line.size()>2048||!WriteFile(handle_,line.data(),static_cast<DWORD>(line.size()),&count,nullptr)||count!=line.size()||!FlushFileBuffers(handle_)){failed_=true;return;}
+   ++records_;written_=true;previous_=local.phase;last_at_=now;
+  }catch(...){failed_=true;}
+ }
+};
 std::wstring wide(std::string_view s){return skcoop::launcher::diagnostic_wide(s);}
 fs::path directory(){std::wstring s(32768,0);const auto n=GetModuleFileNameW(nullptr,s.data(),static_cast<DWORD>(s.size()));if(!n||n==s.size())throw std::runtime_error("Pasta do programa indisponivel");s.resize(n);return fs::path(s).parent_path();}
 void report(const fs::path& path,const Status& s,bool success){
@@ -41,19 +91,27 @@ void start(unsigned selected_role){
  else{const auto selected=SendMessageW(rooms_box,LB_GETCURSEL,0,0);if(selected==LB_ERR||static_cast<std::size_t>(selected)>=rooms.size())throw std::runtime_error("Selecione o PC encontrado na lista.");ticket=rooms[static_cast<std::size_t>(selected)].ticket;}
  const auto internal=directory()/L"SeamlessCoop";
  advertiser.reset();browser.reset();rooms.clear();SendMessageW(rooms_box,LB_RESETCONTENT,0,0);busy=true;done=false;role=selected_role;active_ticket=ticket;
- {std::lock_guard lock(state_mutex);launch_state={};preview_state={};job_error.clear();}controls();SetWindowTextW(status_box,L"Preparando o perfil desta conta e conferindo a copia do jogo...\r\nA primeira preparacao pode copiar cerca de 25 GB. Aguarde.");
+ {std::lock_guard lock(state_mutex);launch_state={};preview_state={};preview_receipt_failed=false;job_error.clear();}controls();SetWindowTextW(status_box,L"Preparando o perfil desta conta e conferindo a copia do jogo...\r\nA primeira preparacao pode copiar cerca de 25 GB. Aguarde.");
  try{job=std::thread([internal,ticket,selected_role,preview]{try{
   const auto config=skcoop::launcher::prepare_direct_lan(internal,preview?1u:selected_role,ticket_text(ticket),preview);
   std::unique_ptr<LocalPreview> mirror;
-  const auto result=skcoop::launcher::direct_protected_launch(config,internal,[&](const auto& update){
+  PreviewReceipt receipt(internal/L"receipts");skcoop::launcher::LaunchStatus last_launch;
+  const auto finish=[&]{
+   // Joining stays on the launcher job, outside game callbacks and GUI locks.
+   if(mirror)mirror->stop();const auto local=mirror?mirror->read():LocalPreviewStatus{};
+   if(preview)receipt.observe(last_launch,local,true);
+   std::lock_guard lock(state_mutex);preview_state=local;preview_receipt_failed=receipt.failed();
+  };
+  int result{};
+  try{result=skcoop::launcher::direct_protected_launch(config,internal,[&](const auto& update){
+   last_launch=update;
+   if(preview)receipt.observe(update,mirror?mirror->read():LocalPreviewStatus{});
    if(preview&&!mirror&&update.ready&&update.network==static_cast<unsigned>(State::listening)&&(update.hooks&19)==19)
     mirror=std::make_unique<LocalPreview>(ticket);
    const auto local=mirror?mirror->read():LocalPreviewStatus{};
-   std::lock_guard lock(state_mutex);launch_state=update;preview_state=local;
-  });
-  // Joining this helper happens on the launcher job, never in the game callback
-  // or while holding the GUI state mutex. No second game was launched.
-  if(mirror){mirror->stop();std::lock_guard lock(state_mutex);preview_state=mirror->read();}
+   std::lock_guard lock(state_mutex);launch_state=update;preview_state=local;preview_receipt_failed=receipt.failed();
+  });}catch(...){finish();throw;}
+  finish();
   if(result){std::lock_guard lock(state_mutex);job_error=L"O jogo nao terminou normalmente. Os registros estao na pasta SeamlessCoop/receipts.";}
  }catch(const std::exception& e){std::lock_guard lock(state_mutex);job_error=wide(e.what());}catch(...){std::lock_guard lock(state_mutex);job_error=L"Nao foi possivel concluir esta abertura.";}done=true;});}
  catch(...){busy=false;controls();throw;}
@@ -64,11 +122,12 @@ void update(){
   if(!same_rooms(rooms,found.rooms)){rooms=found.rooms;SendMessageW(rooms_box,LB_RESETCONTENT,0,0);for(const auto& room:rooms){const auto label=L"PC encontrado - "+wide(room.ticket.address);SendMessageW(rooms_box,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));}if(!rooms.empty())SendMessageW(rooms_box,LB_SETCURSEL,0,0);controls();}
   if(found.error)SetWindowTextW(status_box,L"A busca de salas encontrou um problema de rede. Confira a permissao do Firewall na rede privada.");return;
  }
- if(done){job.join();busy=false;advertiser.reset();std::wstring error;skcoop::launcher::LaunchStatus state;{std::lock_guard lock(state_mutex);error=job_error;state=launch_state;}controls();
-  if(!error.empty()){SetWindowTextW(status_box,L"A abertura foi interrompida. Seu perfil de teste foi mantido.");MessageBoxW(window,error.c_str(),L"Sekiro Co-op",MB_OK|MB_ICONERROR);}
-  else SetWindowTextW(status_box,state.completed?L"Jogo fechado normalmente. O progresso deste teste foi preservado.\r\nPara jogar novamente, use Criar jogo ou Entrar.":L"A abertura terminou antes de completar o teste.");return;
+ if(done){job.join();busy=false;advertiser.reset();std::wstring error;skcoop::launcher::LaunchStatus state;bool receipt_failed{};{std::lock_guard lock(state_mutex);error=job_error;state=launch_state;receipt_failed=preview_receipt_failed;}controls();
+  if(!error.empty()){SetWindowTextW(status_box,L"A abertura foi interrompida. Seu perfil de teste foi mantido.");if(receipt_failed)error+=L"\r\nNao foi possivel salvar o registro do parceiro simulado.";MessageBoxW(window,error.c_str(),L"Sekiro Co-op",MB_OK|MB_ICONERROR);}
+  else{std::wstring label=state.completed?L"Jogo fechado normalmente. O progresso deste teste foi preservado.\r\nPara jogar novamente, use Criar jogo ou Entrar.":L"A abertura terminou antes de completar o teste.";
+   if(role==3)label+=receipt_failed?L"\r\nNao foi possivel salvar o registro do parceiro simulado.":L"\r\nO resultado do parceiro simulado foi salvo junto aos registros desta abertura.";SetWindowTextW(status_box,label.c_str());}return;
  }
- skcoop::launcher::LaunchStatus state;LocalPreviewStatus local;{std::lock_guard lock(state_mutex);state=launch_state;local=preview_state;}
+ skcoop::launcher::LaunchStatus state;LocalPreviewStatus local;bool receipt_failed{};{std::lock_guard lock(state_mutex);state=launch_state;local=preview_state;receipt_failed=preview_receipt_failed;}
  if(!state.ready)return;
  if(role==1&&!advertiser&&state.network==static_cast<unsigned>(State::listening)&&(state.hooks&19)==19)advertiser=std::make_unique<Discovery>(active_ticket);
  if(advertiser&&state.network!=static_cast<unsigned>(State::listening))advertiser.reset();
@@ -77,12 +136,12 @@ void update(){
  else if(state.actor_error||state.action_error)label+=L"\r\nO teste de movimento foi interrompido. Feche o jogo pelo menu para repetir.";
  else if(role==3&&finished(local.phase)){
   if(local.phase==LocalPreviewPhase::time_limit)label+=L"\r\nO teste local atingiu seu limite de tempo. Feche pelo menu para repetir.";
-  else if(local.phase==LocalPreviewPhase::path_limit)label+=L"\r\nO teste local atingiu o limite de trajeto. Feche pelo menu; na proxima, ande menos.";
   else if(local.phase==LocalPreviewPhase::source_ended||local.phase==LocalPreviewPhase::stopped)label+=L"\r\nO teste local terminou. Feche pelo menu para repetir.";
   else label+=L"\r\nO teste local encontrou uma falha. Feche pelo menu para repetir.";
  }
  else if(state.network_error)label+=L"\r\nO teste de movimento foi interrompido. Feche o jogo pelo menu para repetir.";
  else if(state.actor_phase==5||state.network>=static_cast<unsigned>(State::lost))label+=L"\r\nO teste terminou ou o parceiro saiu. Feche pelo menu e abra novamente para repetir.";
+ else if(role==3&&local.phase==LocalPreviewPhase::path_limit)label+=L"\r\nParceiro pausado: volte para onde voce estava quando ele apareceu e espere 2 segundos.";
  else if(role==3&&local.phase==LocalPreviewPhase::stale_source)label+=L"\r\nTeste local aguardando movimentos atuais. Volte ao jogo para retomar.";
  else if(state.network==static_cast<unsigned>(State::listening))label+=role==3?L"\r\nPreparando o parceiro de teste neste PC...":L"\r\nAguardando o notebook. Nele, selecione este PC e clique em Entrar.";
  else if(state.network==static_cast<unsigned>(State::connected)){
@@ -94,6 +153,7 @@ void update(){
  }else label+=L"\r\nCarregando a conexao...";
  if(advertiser&&advertiser->read().error)label+=L"\r\nNao foi possivel anunciar a sala. Confira se outro lancador esta aberto.";
  if(state.guard_rearm)label+=L"\r\nPara retomar a defesa, solte o botao e pressione novamente.";
+ if(receipt_failed)label+=L"\r\nNao foi possivel salvar o registro do parceiro simulado; o jogo continua aberto.";
  std::wostringstream text;text<<label<<L"\r\nMovimentos enviados: "<<state.sent<<L"    recebidos: "<<state.received
   <<L"\r\nAcoes locais registradas: "<<state.actions_captured<<L"    do parceiro aplicadas: "<<state.actions_replayed;SetWindowTextW(status_box,text.str().c_str());
 }

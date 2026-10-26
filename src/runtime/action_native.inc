@@ -306,6 +306,10 @@ void receive_actions(const Frame&,bool following) {
     action_receiver.observe(network_view.actions,action_consumer_active,GetTickCount64());
     if(action_receiver.fault()!=lan::ActionFault::none)action_fault(action_receiver.fault());
     if(InterlockedCompareExchange(&status->action_error,0,0)){guarded_retire_actions();remote_actor.fail(Error::input_value);return;}
+    // The peer can observe an expiry while world callbacks are paused. Retire
+    // the previous native inputs even when this callback sees a fresh baseline.
+    // Held guard metadata must never synthesize another deflect entry here.
+    if(action_receiver.rebaselined())release_guest_actions();
     if(!action_receiver.active()){release_guest_actions();InterlockedExchange(&status->action_guard_rearm_required,0);}
     else {
         while(const auto event=action_receiver.take(GetTickCount64())){

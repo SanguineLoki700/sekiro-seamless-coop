@@ -19,18 +19,21 @@ enum class ActionFramePush { accepted,stale,failed };
 // Histories remain separate from pose interpolation. Batches containing new
 // serials retain their original envelope/arrival until explicitly acknowledged.
 // Repeated histories refresh latest(), never overwrite the first batch arrival.
+// A newer frame after expiry begins an internal baseline generation: retained
+// expired batches are discarded, and consumers must baseline without replay.
 class ActionFrameBuffer {
 public:
  ActionFramePush push(const ActionFrame&)noexcept;
  bool acknowledge(std::uint64_t packet_sequence)noexcept;
  const std::optional<ActionFrame>& latest()const noexcept{return latest_;}
  std::span<const ActionFrame> pending()const noexcept{return {pending_.data(),count_};}
+ std::uint64_t baseline_generation()const noexcept{return baseline_generation_;}
  ActionFault fault()const noexcept{return fault_;}
 private:
  std::array<ActionFrame,action_queue_capacity> pending_{};
  std::optional<ActionFrame> latest_;
  std::size_t count_{};
- std::uint64_t acknowledged_{};
+ std::uint64_t acknowledged_{},baseline_generation_{};
  ActionFault fault_{};
  ActionFramePush fail(ActionFault)noexcept;
 };

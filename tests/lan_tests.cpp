@@ -176,6 +176,70 @@ void action_view_bounds(){
  require(guard_releases.push({scope,off,2,1100})==ActionFramePush::accepted&&!guard_releases.latest()->history.guarding,"Real guard release refused");
  require(guard_releases.push({scope,off,2,1100})==ActionFramePush::stale,"Duplicate guard release batch accepted twice");
 }
+void action_expired_views(){
+ const auto t=ticket();ActionScope scope{t.room,random_id(),101,7};ActionCapture source(7);
+ require(source.capture(ActionKind::guard_enter,1)&&source.offered(1),"Expiry guard source");
+ for(std::uint32_t i=2;i<=7;++i)require(source.capture(ActionKind::attack_combo1,i)&&source.offered(i),"Expiry rolling source");
+ const auto old=*source.snapshot(7);
+ require(source.capture(ActionKind::attack_combo2,8)&&source.offered(8),"Expiry overlapping source");const auto next=*source.snapshot(8);
+ for(std::uint32_t i=9;i<=15;++i)require(source.capture(ActionKind::attack_combo3,i)&&source.offered(i),"Expiry missing prefix source");
+ const auto resumed=*source.snapshot(15);
+ const auto frame=[&](const ActionSnapshot& history,std::uint64_t seq,std::uint64_t arrival){return ActionFrame{scope,history,seq,arrival};};
+ for(const auto delay:{action_frame_expiry_ms,action_frame_expiry_ms+1}){
+  ActionFrameBuffer checked;require(checked.push(frame(old,1,1000))==ActionFramePush::accepted,"Expiry baseline");
+  const bool expired=delay>action_frame_expiry_ms;const auto result=checked.push(frame(resumed,2,1000+delay));
+  require(result==(expired?ActionFramePush::accepted:ActionFramePush::failed),"Expiry boundary admitted fresh gap or refused expired gap");
+  if(!expired){require(checked.fault()==ActionFault::gap&&checked.baseline_generation()==0,"Fresh gap created a recovery generation");continue;}
+  require(checked.baseline_generation()==1&&checked.pending().size()==1&&checked.pending()[0].packet_sequence==2&&checked.latest()->history.guarding,"Expired pending history not replaced with latest baseline batch");
+  require(checked.push(frame(old,1,4000))==ActionFramePush::stale&&checked.baseline_generation()==1&&checked.latest()->arrival_ms==1501,"Stale sequence refreshed expiry generation");
+  require(checked.push(frame(resumed,3,2001))==ActionFramePush::accepted&&checked.baseline_generation()==1&&checked.pending()[0].arrival_ms==1501,"Boundary refresh overwrote original arrival");
+  require(checked.push(frame(resumed,4,2502))==ActionFramePush::accepted&&checked.baseline_generation()==2&&checked.pending().empty(),"No-action expiry retained unread expired batches");
+  require(source.capture(ActionKind::guard_exit,16)&&source.offered(16),"Expiry real release source");const auto released=*source.snapshot(16);
+  require(checked.push(frame(released,5,2503))==ActionFramePush::accepted&&checked.pending().size()==1&&!checked.latest()->history.guarding,"New guard edge after baseline lost");
+  require(checked.acknowledge(4)&&checked.pending().size()==1&&checked.pending()[0].packet_sequence==5,"Older ACK discarded new-generation batch");
+  require(checked.acknowledge(5)&&checked.pending().empty()&&checked.baseline_generation()==2,"ACK changed internal generation");
+ }
+ // Expiry permits an unknowable missing prefix, never mutation of immutable
+ // overlaps, a contradictory complete suffix, scope changes or clock rollback.
+ for(unsigned defect=0;defect<7;++defect){
+  ActionFrameBuffer checked;auto initial=frame(old,1,1000);initial.history.source_ms=100;
+  require(checked.push(initial)==ActionFramePush::accepted,"Expiry invariant baseline");
+  auto bad=frame(next,2,1600);bad.history.source_ms=101;ActionFault expected=ActionFault::invalid;
+  if(defect==0)bad.history.events[0].direction+=1;
+  if(defect==1)bad.history.guarding=false;
+  if(defect==2){bad.history=initial.history;bad.history.source_ms=101;bad.history.guarding=false;}
+  if(defect==3){bad.scope.connection=random_id();expected=ActionFault::scope_changed;}
+  if(defect==4){bad.history.source_ms=99;expected=ActionFault::clock_regressed;}
+  if(defect==5){bad.arrival_ms=999;expected=ActionFault::clock_regressed;}
+  if(defect==6){bad.history.events[bad.history.count-1].kind=ActionKind::guard_exit;}
+  require(checked.push(bad)==ActionFramePush::failed&&checked.fault()==expected&&checked.baseline_generation()==0,"Expiry bypassed validation or created a rejected generation");
+  require(checked.push(frame(resumed,3,3000))==ActionFramePush::failed&&checked.fault()==expected,"Expiry recovered a latched protocol fault");
+ }
+ // A full but not yet faulted batch queue may expire normally. A fresh queue
+ // overflow remains terminal; expiry cannot erase the resulting fault.
+ for(bool overflow:{false,true}){
+  ActionFrameBuffer checked;ActionCapture flood(7);
+  for(std::uint32_t i=1;i<=action_queue_capacity;++i){require(flood.capture(ActionKind::attack_combo1,i)&&flood.offered(i),"Expiry queue fill source");require(checked.push(frame(*flood.snapshot(i),i,1000+i))==ActionFramePush::accepted,"Expiry queue fill");}
+  require(flood.capture(ActionKind::attack_combo2,17)&&flood.offered(17),"Expiry queue final source");const auto last=*flood.snapshot(17);
+  if(overflow)require(checked.push(frame(last,17,1017))==ActionFramePush::failed&&checked.fault()==ActionFault::overflow,"Fresh overflow disappeared");
+  const auto result=checked.push(frame(last,18,2017));
+  require(result==(overflow?ActionFramePush::failed:ActionFramePush::accepted),"Expired queue did not preserve fault boundary");
+  require(overflow?(checked.baseline_generation()==0&&checked.fault()==ActionFault::overflow):(checked.baseline_generation()==1&&checked.pending().size()==1&&checked.pending()[0].packet_sequence==18),"Expired pending replacement or latched overflow wrong");
+ }
+ // Seeded loss/boundary cases vary how far history advances. Missing prefixes
+ // are accepted only after expiry, while complete fresh suffixes stay usable.
+ std::uint32_t seed=0x35a78f19;
+ for(unsigned trial=0;trial<128;++trial){
+  seed=seed*1664525u+1013904223u;const auto events=1u+seed%12u;
+  seed=seed*1664525u+1013904223u;const auto delay=1u+seed%1100u;
+  ActionCapture capture(7);ActionFrameBuffer checked;require(checked.push(frame(*capture.snapshot(0),1,1000))==ActionFramePush::accepted,"Seeded expiry baseline");
+  for(std::uint32_t i=1;i<=events;++i)require(capture.capture(ActionKind::attack_combo1,i)&&capture.offered(i),"Seeded expiry capture");
+  const bool expired=delay>action_frame_expiry_ms,complete=events<=action_history_capacity;
+  const auto result=checked.push(frame(*capture.snapshot(events),2,1000+delay));
+  require(result==((expired||complete)?ActionFramePush::accepted:ActionFramePush::failed),"Seeded gap/expiry classification changed");
+  require(checked.baseline_generation()==(expired?1u:0u),"Seeded recovery generation changed on a fresh or rejected frame");
+ }
+}
 void action_loopback(){
  auto t=ticket();const auto build=action_build();Peer host({Role::host,t,build,101},"127.0.0.1");wait([&]{return host.read().status.state==State::listening;});t.port=host.read().status.local_port;Peer guest({Role::guest,t,build,202});
  ActionCapture a(7),b(7);const auto idle_a=action_motion(a,0),idle_b=action_motion(b,0);
@@ -221,4 +285,4 @@ void loopback(){
  wait([&]{return x.read().status.state==State::failed;});require(x.read().status.failure==Failure::scene,"Loading change not reported");y.stop();x.stop();
 }
 }
-int main(){try{codec();state_machine();smoothing();independent_profiles();action_codec();action_envelopes_and_views();action_view_bounds();loopback();action_loopback();std::cout<<"PASS wire3 fixed action history, authenticated metadata, held guard, scope/replay/lifetime guards, bounded views and actual loopback actions\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{codec();state_machine();smoothing();independent_profiles();action_codec();action_envelopes_and_views();action_view_bounds();action_expired_views();loopback();action_loopback();std::cout<<"PASS wire3 fixed action history, authenticated metadata, held guard, expiry baselines, scope/replay/lifetime guards, bounded views and actual loopback actions\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

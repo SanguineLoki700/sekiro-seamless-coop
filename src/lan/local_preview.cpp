@@ -13,8 +13,23 @@ float gap(const Motion& a,const Motion& b) noexcept {
 }
 }
 bool finished(LocalPreviewPhase phase) noexcept {
-    return phase==LocalPreviewPhase::time_limit||phase==LocalPreviewPhase::path_limit||
+    return phase==LocalPreviewPhase::time_limit||
         phase==LocalPreviewPhase::source_ended||phase==LocalPreviewPhase::failed||phase==LocalPreviewPhase::stopped;
+}
+std::string_view local_preview_phase_name(LocalPreviewPhase phase) noexcept {
+    switch(phase){
+    case LocalPreviewPhase::starting:return "starting";
+    case LocalPreviewPhase::waiting_frame:return "waiting_frame";
+    case LocalPreviewPhase::waiting_separation:return "waiting_separation";
+    case LocalPreviewPhase::active:return "active";
+    case LocalPreviewPhase::time_limit:return "time_limit";
+    case LocalPreviewPhase::path_limit:return "path_paused";
+    case LocalPreviewPhase::stale_source:return "stale_source";
+    case LocalPreviewPhase::source_ended:return "source_ended";
+    case LocalPreviewPhase::failed:return "failed";
+    case LocalPreviewPhase::stopped:return "stopped";
+    }
+    return "unknown";
 }
 Build local_preview_build(){
     Build b;b.purpose=Purpose::native_avatar;b.adapter=independent_adapter;b.scenario=local_combat_scenario;
@@ -45,18 +60,27 @@ LocalPreviewStep LocalPreviewMirror::step(const View& view,std::uint64_t now) no
     // Scope/origin/separation and the original active deadline are retained.
     if(now-pose->time>action_frame_expiry_ms){phase_=LocalPreviewPhase::stale_source;return {{},actions->packet_sequence};}
     const auto& source=pose->motion;
+    const auto pause_path=[&]{
+        if(!path_paused_at_)path_paused_at_=now;
+        phase_=LocalPreviewPhase::path_limit;
+        return LocalPreviewStep{{},actions->packet_sequence};
+    };
     if(!origin_){origin_=source;phase_=LocalPreviewPhase::waiting_separation;return {{},actions->packet_sequence};}
     if(source.epoch!=origin_->epoch||source.descriptor!=origin_->descriptor){phase_=LocalPreviewPhase::failed;return {};}
     if(!separated_){
         const auto separation=gap(*origin_,source);
-        if(separation>6.f){phase_=LocalPreviewPhase::path_limit;return {};}
+        if(separation>6.f)return pause_path();
+        if(path_paused_at_&&now-*path_paused_at_<local_preview_resume_delay_ms)return pause_path();
+        path_paused_at_.reset();
         if(separation<1.25f){phase_=LocalPreviewPhase::waiting_separation;return {{},actions->packet_sequence};}
         separated_=source;active_at_=now;phase_=LocalPreviewPhase::active;
     }
     auto result=source;
     for(std::size_t i=0;i<3;++i)result.position[i]+=origin_->position[i]-separated_->position[i];
     if(!valid(result)){phase_=LocalPreviewPhase::failed;return {};}
-    if(gap(result,*origin_)>6.f){phase_=LocalPreviewPhase::path_limit;return {};}
+    if(gap(result,*origin_)>6.f)return pause_path();
+    if(path_paused_at_&&now-*path_paused_at_<local_preview_resume_delay_ms)return pause_path();
+    path_paused_at_.reset();
     phase_=LocalPreviewPhase::active;
     return {result,actions->packet_sequence};
 }
@@ -69,10 +93,15 @@ struct LocalPreview::Impl {
         LocalPreviewStatus update;
         try{
             SessionConfig config;config.role=Role::guest;config.ticket=ticket;config.participant=random_participant();config.build=local_preview_build();
-            Peer peer(std::move(config),"127.0.0.1");LocalPreviewMirror mirror(GetTickCount64());
+            Peer peer(std::move(config),"127.0.0.1");const auto started=GetTickCount64();LocalPreviewMirror mirror(started);
             while(!stop_requested){
                 const auto view=peer.read();const auto next=mirror.step(view,GetTickCount64());
+                if(mirror.phase()!=update.phase){
+                    if(mirror.phase()==LocalPreviewPhase::path_limit)++update.path_pauses;
+                    if(mirror.phase()==LocalPreviewPhase::stale_source)++update.stale_pauses;
+                }
                 update.phase=mirror.phase();update.failure=view.status.failure;update.action_fault=view.status.action_fault;
+                update.elapsed_ms=GetTickCount64()-started;
                 update.sent=view.status.frames_sent;update.received=view.status.frames_received;
                 if(finished(update.phase)){publish(update);break;}
                 if(next.motion){

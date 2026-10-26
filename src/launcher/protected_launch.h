@@ -19,6 +19,8 @@ struct LaunchStatus {
     std::uint32_t action_error{};
     std::uint64_t actions_captured{},actions_replayed{};
     bool guard_rearm{},guarding{};
+    // Exact basename of the already-created host receipt, never a user path.
+    std::string receipt_name;
 };
 using LaunchObserver=std::function<void(const LaunchStatus&)>;
 int direct_protected_launch(const std::filesystem::path& config,const std::filesystem::path& runtime_directory={},const LaunchObserver& observer={});
