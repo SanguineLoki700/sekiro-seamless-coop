@@ -345,6 +345,7 @@ std::string counters(const SharedStatus& s) {
         <<",\"guard_enter_captured\":"<<load(s.action_guard_enter_captured)<<",\"guard_exit_captured\":"<<load(s.action_guard_exit_captured)
         <<",\"guard_enter_replayed\":"<<load(s.action_guard_enter_replayed)<<",\"guard_exit_replayed\":"<<load(s.action_guard_exit_replayed)
         <<"},\"native_controller\":{\"phase\":"<<load(s.native_controller_phase)<<",\"fault\":"<<load(s.native_controller_fault)
+        <<",\"stop_reason\":"<<load(s.native_controller_reason)
         <<",\"commands\":"<<load(s.native_controller_commands)<<",\"consumed\":"<<load(s.native_controller_consumed)
         <<",\"guard_ms\":"<<load(s.native_controller_guard_ms)<<",\"displacement_mm\":"<<load(s.native_controller_displacement_mm)
         <<",\"manual_events\":"<<load(s.native_controller_manual_events)<<",\"primary_writes\":"<<load(s.native_controller_primary_writes)

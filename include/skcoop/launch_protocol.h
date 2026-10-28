@@ -128,7 +128,7 @@ struct alignas(8) SharedStatus {
     volatile LONG native_controller_phase,native_controller_fault;
     volatile LONG native_controller_state_code,native_controller_output_bound;
     volatile LONG native_controller_negative_passed,native_controller_trace_count;
-    volatile LONG native_controller_trace_overflow,native_controller_padding;
+    volatile LONG native_controller_trace_overflow,native_controller_reason;
     volatile LONG64 native_controller_commands,native_controller_consumed,
         native_controller_guard_ms,native_controller_displacement_mm,
         native_controller_manual_events,native_controller_primary_writes;

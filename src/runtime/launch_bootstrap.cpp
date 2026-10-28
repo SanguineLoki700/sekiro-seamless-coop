@@ -103,7 +103,7 @@ bool valid_initial_status() noexcept {
         load(shared->native_controller_phase)||load(shared->native_controller_fault)||
         load(shared->native_controller_state_code)||load(shared->native_controller_output_bound)||
         load(shared->native_controller_negative_passed)||load(shared->native_controller_trace_count)||
-        load(shared->native_controller_trace_overflow)||load(shared->native_controller_padding))
+        load(shared->native_controller_trace_overflow)||load(shared->native_controller_reason))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{

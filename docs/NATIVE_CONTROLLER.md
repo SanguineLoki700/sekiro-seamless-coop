@@ -36,6 +36,8 @@ O observador exige chamadas nativas originais que escrevem os parâmetros do gra
 
 Um binding inclui mundo, registro, ator, handles observados, controlador, componentes, raiz e módulos próprios. Mudança de identidade aposenta as referências publicadas; endereço antigo não continua selecionado. Um ator ainda válido recebe entrada neutra depois do término. Os escopos de entrada e propriedade são restaurados em retorno normal, chamadas aninhadas, exceções C++ e SEH; a limpeza possui teste com um executável próprio.
 
+Durante a preparação, pausas de carregamento mantêm o convidado neutro e reiniciam a espera de estabilidade. Depois de armar a sequência, perda de foco, atualização expirada ou erro interrompem o teste. O recibo conserva a primeira causa de parada; não há retomada silenciosa de comandos antigos.
+
 ## Cenário e resultado
 
 O assistente acrescenta **Testar controlador nativo neste PC**, reutilizando a preparação e os saves separados. A sequência cria uma vez, posiciona uma vez, aguarda estabilização e testa entrada neutra, caminhada, parada, ataque, soltura, defesa mantida e soltura. O limite total é 4 m; a caminhada exige deslocamento próprio e a parada tem verificação separada. Nenhuma correção posterior de posição, escrita manual no grafo ou enfileiramento manual HKB é permitido.

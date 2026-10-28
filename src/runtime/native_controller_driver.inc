@@ -62,9 +62,14 @@ Held real_held{};
 Pressed real_pressed{};
 WriteGraphFloat real_graph_set{};
 
-void fault() noexcept {aborted.store(true,std::memory_order_release);}
+enum class StopReason:LONG {none,internal,ownership,wrong_thread,invalid_delta,source_axes,
+    source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow};
+void fault(StopReason reason=StopReason::internal) noexcept {
+    InterlockedCompareExchange(&status->native_controller_reason,static_cast<LONG>(reason),0);
+    aborted.store(true,std::memory_order_release);
+}
 void retire() noexcept {
-    fault();retired.store(true,std::memory_order_release);
+    fault(StopReason::ownership);retired.store(true,std::memory_order_release);
     owned_controller.store(0,std::memory_order_release);owned_actor.store(0,std::memory_order_release);
     primary_controller.store(0,std::memory_order_release);
 }
@@ -198,17 +203,24 @@ template<std::size_t Index> std::uint8_t flag(void* context) {
     return pad_scope&&pad_scope->guest&&!retired.load()?0:real_flags[Index](context);
 }
 void pad_before(PadScope& scope,void* controller,void* component,float delta) noexcept {
-    if(!on_thread()||!valid_update_delta(delta)){fault();return;}
+    if(!on_thread()){fault(StopReason::wrong_thread);return;}
+    if(!valid_update_delta(delta)){
+        // Model streaming can stall before any commands are armed. The owned
+        // guest remains virtual-neutral; only a live trial treats a tick gap as
+        // a failed command lifetime. Nonfinite/negative native deltas still fail.
+        if(!std::isfinite(delta)||delta<0||scenario)fault(StopReason::invalid_delta);
+        return;
+    }
     try {
         const auto& b=scope.guest?guest:source;
         if(reinterpret_cast<Token>(controller)!=b.controller||reinterpret_cast<Token>(component)!=b.component||!relationships(b)){
-            fault();return;
+            fault(StopReason::ownership);return;
         }
         scope.usable=!aborted.load();
         if(scope.guest){
             scope.supplied=scope.usable&&!provider_disabled?latch.begin_update(GetTickCount64()):PlayerInput{};
             const auto projected=project_native_stick(scope.supplied.movement,read<float>(b.controller+0x94));
-            if(!projected){scope.usable=false;fault();return;}scope.axes=*projected;
+            if(!projected){scope.usable=false;fault(StopReason::projection);return;}scope.axes=*projected;
             scope.identity=scope.usable&&!provider_disabled?latch.source_identity():std::nullopt;
             produced.reset();consumer_valid=false;held_observed=false;resolver_completed=false;
             native_held_seen=0;native_held=0;guest_at=GetTickCount64();
@@ -222,13 +234,13 @@ void pad_after(const PadScope& scope) noexcept {
     try {
         if(!scope.usable)return;
         if(scope.guest){produced=scope.identity;return;}
-        if(scope.source_axes_seen!=3){fault();return;}
+        if(scope.source_axes_seen!=3){fault(StopReason::source_axes);return;}
         auto movement=movement_from_native_stick(scope.source_axes,read<float>(source.controller+0x94));
-        if(!movement){fault();return;}
+        if(!movement){fault(StopReason::source_projection);return;}
         primary_input={*movement,scope.captured.held};primary_at=GetTickCount64();++source_captures;
         // Retain edges at native update frequency, before any future network
         // offer. This local trial never sends primary input to the guest.
-        if(!primary_capture.capture(primary_input,primary_at))fault();
+        if(!primary_capture.capture(primary_input,primary_at))fault(StopReason::capture_overflow);
     }catch(...){fault();}
 }
 void guarded_pad_after(const PadScope& scope) noexcept {
@@ -239,7 +251,7 @@ void pad_update(void* controller,float delta,void* component) {
     const bool is_guest=address==owned_controller.load(std::memory_order_acquire)&&address;
     const bool is_source=address==primary_controller.load(std::memory_order_acquire)&&address&&on_thread();
     if(!is_guest&&!is_source){real_pad(controller,delta,component);return;}
-    if(is_guest&&!on_thread()){retire();real_pad(controller,delta,component);return;}
+    if(is_guest&&!on_thread()){fault(StopReason::wrong_thread);retire();real_pad(controller,delta,component);return;}
     regions.begin();const bool valid_binding=!retired.load()&&guarded_verify(is_guest?guest:source);regions.end();
     if(!valid_binding){retire();real_pad(controller,delta,component);return;}
     if(pad_scope)fault();
@@ -371,7 +383,7 @@ void trace_native_command_state(std::uint64_t now) noexcept {
     if(count>0){const auto& last=status->native_controller_trace[count-1];
         if(last.phase==phase&&last.state_code==state_code&&last.input_generation==static_cast<LONG64>(generation))return;}
     if(count<0||static_cast<std::size_t>(count)>=launch::native_trace_capacity){
-        InterlockedExchange(&status->native_controller_trace_overflow,1);fault();neutralize();return;
+        InterlockedExchange(&status->native_controller_trace_overflow,1);fault(StopReason::trace_overflow);neutralize();return;
     }
     auto& item=status->native_controller_trace[count];
     item.phase=phase;item.state_code=state_code;item.input_generation=static_cast<LONG64>(generation);
@@ -384,12 +396,18 @@ void trace_native_command_state(std::uint64_t now) noexcept {
 void native_command_step(void* creator) {
     using namespace native_commands;
     const auto now=GetTickCount64();
-    if(owned_actor.load()&&last_world_at&&now-last_world_at>250){fault();neutralize();}
+    if(owned_actor.load()&&last_world_at&&now-last_world_at>250){
+        neutralize();neutral_at=0;
+        if(scenario)fault(StopReason::world_gap);
+    }
     last_world_at=now;
     if(aborted.load()){neutralize();fail_demo(Error::input_owner);publish_native_commands();return;}
     DWORD foreground{};GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
     const bool focused=foreground==GetCurrentProcessId();
-    if(owned_actor.load()&&!focused){fault();neutralize();fail_demo(Error::input_owner);return;}
+    if(owned_actor.load()&&!focused){
+        neutralize();neutral_at=0;
+        if(scenario){fault(StopReason::focus_lost);fail_demo(Error::input_owner);}return;
+    }
     if(demo.phase==Phase::failed||demo.phase==Phase::stopped){neutralize();return;}
     if(scenario&&terminal(scenario->report().phase)&&negative_passed){neutralize();publish_native_commands();return;}
     game.creator=creator;
@@ -402,7 +420,7 @@ void native_command_step(void* creator) {
     demo.tick(game);
     if(demo.phase!=Phase::following)return;
     PlayerInput primary;
-    if(!adapter.capture_primary(primary)){if(now-load_at>5000)fault();return;}
+    if(!adapter.capture_primary(primary)){neutral_at=0;if(now-load_at>30000)fault(StopReason::source_stale);return;}
     if(!scenario&&primary!=PlayerInput{}){neutral_at=0;return;}
     if(!neutral_at)neutral_at=now;
     if(!scenario&&now-neutral_at<500)return;
@@ -421,12 +439,12 @@ void native_command_step(void* creator) {
     const auto output=scenario->tick(now,observation);
     if(output.neutralize)adapter.neutralize_guest();
     if(output.command){
-        if(receiver.observe(command_scope,*output.command,now)!=CommandReceive::accepted){fault();neutralize();return;}
+        if(receiver.observe(command_scope,*output.command,now)!=CommandReceive::accepted){fault(StopReason::delivery);neutralize();return;}
         const auto delivery=receiver.take(now);
-        if(!delivery||!adapter.apply_guest(*delivery)){fault();neutralize();return;}
+        if(!delivery||!adapter.apply_guest(*delivery)){fault(StopReason::delivery);neutralize();return;}
     }
     if(provider_disabled&&terminal(scenario->report().phase)){
-        if(scenario->report().fault!=ControllerScenarioFault::consumer_timeout){fault();neutralize();publish_native_commands();return;}
+        if(scenario->report().fault!=ControllerScenarioFault::consumer_timeout){fault(StopReason::negative_control);neutralize();publish_native_commands();return;}
         negative_passed=true;provider_disabled=false;++generation;command_scope.input_generation=generation;
         latch=NativeInputLatch{generation};receiver=PlayerCommandReceiver{supported};consumer_valid=false;
         scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);
