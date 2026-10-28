@@ -359,7 +359,17 @@ std::string counters(const SharedStatus& s) {
         value<<"{\"phase\":"<<load(item.phase)<<",\"state_code\":"<<load(item.state_code)
             <<",\"generation\":"<<load(item.input_generation)<<",\"frame\":"<<load(item.frame_sequence)
             <<",\"elapsed_ms\":"<<load(item.elapsed_ms)<<'}';}
-    value<<"],\"result_is_provisional\":true}}";
+    value<<"],\"mailbox_failure\":";
+    const auto& diagnostic=s.native_controller_mailbox;const auto kind=load(diagnostic.kind);
+    if(!kind)value<<"null";
+    else {
+        value<<"{\"kind\":"<<kind<<",\"latch_fault\":"<<load(diagnostic.latch_fault)<<",\"epoch\":"<<load(diagnostic.epoch)
+            <<",\"button_mask\":"<<load(diagnostic.button)<<",\"expected_held\":"<<load(diagnostic.expected_held)
+            <<",\"observed_held\":"<<load(diagnostic.observed_held)<<",\"held_ms\":"<<load(diagnostic.held_ms)
+            <<",\"expected_move_milli\":["<<load(diagnostic.expected_move_milli[0])<<','<<load(diagnostic.expected_move_milli[1])<<','<<load(diagnostic.expected_move_milli[2])
+            <<"],\"observed_move_milli\":["<<load(diagnostic.observed_move_milli[0])<<','<<load(diagnostic.observed_move_milli[1])<<','<<load(diagnostic.observed_move_milli[2])<<"]}";
+    }
+    value<<",\"result_is_provisional\":true}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {

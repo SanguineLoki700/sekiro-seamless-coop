@@ -1,6 +1,8 @@
 #include "skcoop/actors/native_command_mailbox.hpp"
 #include <atomic>
 #include <barrier>
+#include <bit>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -137,6 +139,7 @@ void invalid_observation_and_ingress(){
     auto extra=command(7,3);extra.state.source_ms=65;extra.state.input.held=button_mask(CommandButton::attack);
     extra.transition_count=1;extra.transitions[0]={65,65,CommandButton::attack,true};
     ticks=2;require(full.offer(extra)==NativeInputOffer::failed&&full.failed()&&!full.consumed());
+    require(full.failure().kind==NativeMailboxFault::latch_failure&&full.failure().latch_fault==NativeInputFault::overflow);
 }
 void pulse_identity_and_duplicates(){
     ticks=0;NativeCommandMailbox box(7,&clock_read);require(box.offer(baseline())==NativeInputOffer::accepted);
@@ -177,7 +180,55 @@ void concurrent_ingress_updates_and_observers(){
     native.join();ingress.join();observer.join();require(good&&!box.failed());
     const auto final=box.consumed();require(final&&final->source.frame_sequence==rounds);
 }
+void failure_diagnostics(){
+    ticks=10;NativeCommandMailbox box(7,&clock_read);auto requested=baseline();requested.state.input.movement={{1,0},.35f};
+    require(box.offer(requested)==NativeInputOffer::accepted);const auto frame=begin(box);require(box.finish_update(frame.epoch));
+    const MovementIntent actual{{0,-1},.5f};
+    require(!box.observe_resolver(frame.epoch,actual,true,true,true));const auto first=box.failure();
+    require(first.kind==NativeMailboxFault::movement_mismatch&&first.latch_fault==NativeInputFault::none&&first.epoch==frame.epoch);
+    require(first.expected==frame.input&&first.observed.movement==actual&&first.observed.held==0);
+    // Later calls, a clock failure during suspend, and even an explicitly new
+    // lifetime cannot overwrite the mailbox object's first diagnostic report.
+    require(!box.observe_held(frame.epoch,CommandButton::guard,1));ticks=9;box.suspend();
+    ticks=20;require(box.reset_generation(8));const auto check_first=[&]{const auto value=box.failure();
+        return value.kind==first.kind&&value.latch_fault==first.latch_fault&&value.epoch==first.epoch&&
+            value.expected==first.expected&&value.observed==first.observed&&value.button==first.button&&value.held_duration==first.held_duration;};
+    require(check_first());require(box.offer(baseline(8))==NativeInputOffer::accepted);const auto later=begin(box);box.abandon_update(later.epoch);
+    require(box.failed()&&check_first());
+    std::atomic<bool> coherent{true};std::thread reader([&]{for(unsigned i=0;i<100;++i)if(!check_first())coherent=false;});
+    std::thread suspender([&]{for(unsigned i=0;i<100;++i)box.suspend();});reader.join();suspender.join();require(coherent&&check_first());
+
+    ticks=0;NativeCommandMailbox invalid_move(7,&clock_read);require(invalid_move.offer(baseline())==NativeInputOffer::accepted);
+    const auto invalid_frame=begin(invalid_move);require(invalid_move.finish_update(invalid_frame.epoch));
+    const auto nan=std::numeric_limits<float>::quiet_NaN();const MovementIntent bad{{},nan};
+    require(!invalid_move.observe_resolver(invalid_frame.epoch,bad,true,true,true));
+    const auto invalid=invalid_move.failure();require(invalid.kind==NativeMailboxFault::invalid_movement&&invalid.epoch==invalid_frame.epoch);
+    require(std::bit_cast<std::uint32_t>(invalid.observed.movement.intensity)==std::bit_cast<std::uint32_t>(nan)&&invalid.expected==invalid_frame.input);
+
+    NativeCommandMailbox held(7,&clock_read);require(held.offer(baseline())==NativeInputOffer::accepted);const auto held_frame=begin(held);require(held.finish_update(held_frame.epoch));
+    require(!held.observe_held(held_frame.epoch,CommandButton::guard,.25f));const auto mismatch=held.failure();
+    require(mismatch.kind==NativeMailboxFault::held_mismatch&&mismatch.epoch==held_frame.epoch&&mismatch.expected.held==0&&
+        mismatch.observed.held==button_mask(CommandButton::guard)&&mismatch.button==CommandButton::guard&&mismatch.held_duration==.25f);
+    NativeCommandMailbox invalid_held(7,&clock_read);require(invalid_held.offer(baseline())==NativeInputOffer::accepted);
+    const auto invalid_hold_frame=begin(invalid_held);require(invalid_held.finish_update(invalid_hold_frame.epoch));
+    require(!invalid_held.observe_held(invalid_hold_frame.epoch,CommandButton::attack,-1));
+    const auto invalid_hold=invalid_held.failure();require(invalid_hold.kind==NativeMailboxFault::invalid_held&&invalid_hold.button==CommandButton::attack&&invalid_hold.held_duration==-1);
+
+    NativeCommandMailbox no_clock(7,nullptr),no_generation(0,&clock_read);
+    require(no_clock.failure().kind==NativeMailboxFault::invalid_clock&&no_clock.failure().epoch==0);
+    require(no_generation.failure().kind==NativeMailboxFault::latch_failure&&no_generation.failure().latch_fault==NativeInputFault::invalid);
+    NativeCommandMailbox wrong_generation(7,&clock_read);require(wrong_generation.offer(baseline(8))==NativeInputOffer::failed);
+    require(wrong_generation.failure().kind==NativeMailboxFault::latch_failure&&wrong_generation.failure().latch_fault==NativeInputFault::generation_changed);
+
+    NativeCommandMailbox overlap(7,&clock_read);require(overlap.offer(baseline())==NativeInputOffer::accepted);const auto pending=begin(overlap);
+    require(!overlap.begin_update().accepted&&overlap.failure().kind==NativeMailboxFault::overlapping_update&&overlap.failure().epoch==pending.epoch);
+    NativeCommandMailbox abandoned(7,&clock_read);require(abandoned.offer(baseline())==NativeInputOffer::accepted);const auto original=begin(abandoned);
+    abandoned.abandon_update(original.epoch);require(abandoned.failure().kind==NativeMailboxFault::abandoned_update&&abandoned.failure().epoch==original.epoch);
+    ticks=10;NativeCommandMailbox clock(7,&clock_read);require(clock.offer(baseline())==NativeInputOffer::accepted);const auto clock_frame=begin(clock);
+    require(clock.finish_update(clock_frame.epoch));ticks=9;require(!clock.observe_held(clock_frame.epoch,CommandButton::attack,0));
+    require(clock.failure().kind==NativeMailboxFault::clock_regressed&&clock.failure().epoch==clock_frame.epoch);
 }
-int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();
+}
+int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();
     std::cout<<"PASS portable native command mailbox, threaded ingress/update/observer epochs, actual-evidence requirements, stale/reset/pause guards and no native binding claim\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

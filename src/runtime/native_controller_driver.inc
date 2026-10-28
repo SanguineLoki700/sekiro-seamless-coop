@@ -62,7 +62,8 @@ Pressed real_pressed{};
 WriteGraphFloat real_graph_set{};
 
 enum class StopReason:LONG {none,internal,ownership,wrong_thread,invalid_delta,source_axes,
-    source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow};
+    source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow,
+    receiver_rejected,receiver_empty,command_offer,mailbox_error};
 void fault(StopReason reason=StopReason::internal) noexcept {
     InterlockedCompareExchange(&status->native_controller_reason,static_cast<LONG>(reason),0);
     commands_armed.store(false,std::memory_order_release);
@@ -156,7 +157,7 @@ public:
     bool apply_guest(const CommandDelivery& delivery)noexcept override {
         if(!on_thread()||aborted.load())return false;
         if(provider_disabled)return true; // Deliberate provider-off negative control.
-        try {return mailbox.offer(delivery)==NativeInputOffer::accepted;}catch(...){fault(StopReason::delivery);return false;}
+        try {return mailbox.offer(delivery)==NativeInputOffer::accepted;}catch(...){fault(StopReason::command_offer);return false;}
     }
     void neutralize_guest()noexcept override {if(on_thread())neutralize();else fault();}
     bool observe_guest(NativePlayerState& result)noexcept override {
@@ -237,7 +238,7 @@ void pad_before(PadScope& scope,void* controller,void* component,float delta) no
         if(scope.guest){
             if(scope.usable&&!provider_disabled){
                 scope.frame=mailbox.begin_update();
-                if(!scope.frame.accepted){scope.usable=false;fault(StopReason::delivery);return;}
+                if(!scope.frame.accepted){scope.usable=false;fault(StopReason::mailbox_error);return;}
                 scope.supplied=scope.frame.input;
             }
         }
@@ -393,6 +394,28 @@ void adopt_native_command_actor(Token actor) {
 }
 void publish_native_commands() noexcept {
     using namespace native_commands;
+    // First native mailbox failure is immutable. Publish its kind last so a
+    // host never treats a partially copied diagnostic as a complete result.
+    auto& diagnostic=status->native_controller_mailbox;
+    if(!InterlockedCompareExchange(&diagnostic.kind,0,0))try {
+        const auto failure=mailbox.failure();
+        if(failure.kind!=NativeMailboxFault::none){
+            const auto milli=[](float value)noexcept->LONG {
+                if(!std::isfinite(value))return std::numeric_limits<LONG>::min();
+                return static_cast<LONG>(std::llround(std::clamp(static_cast<double>(value)*1000.,-2147483647.,2147483647.)));
+            };
+            InterlockedExchange(&diagnostic.latch_fault,static_cast<LONG>(failure.latch_fault));
+            InterlockedExchange(&diagnostic.button,static_cast<LONG>(failure.button));
+            InterlockedExchange(&diagnostic.expected_held,static_cast<LONG>(failure.expected.held));
+            InterlockedExchange(&diagnostic.observed_held,static_cast<LONG>(failure.observed.held));
+            InterlockedExchange(&diagnostic.held_ms,milli(failure.held_duration));
+            const float expected[]{failure.expected.movement.direction[0],failure.expected.movement.direction[1],failure.expected.movement.intensity};
+            const float observed[]{failure.observed.movement.direction[0],failure.observed.movement.direction[1],failure.observed.movement.intensity};
+            for(unsigned i=0;i<3;++i){InterlockedExchange(&diagnostic.expected_move_milli[i],milli(expected[i]));InterlockedExchange(&diagnostic.observed_move_milli[i],milli(observed[i]));}
+            InterlockedExchange64(&diagnostic.epoch,static_cast<LONG64>(failure.epoch));
+            InterlockedExchange(&diagnostic.kind,static_cast<LONG>(failure.kind));
+        }
+    }catch(...){fault();}
     if(aborted.load()){
         InterlockedExchange(&status->native_controller_phase,static_cast<LONG>(ControllerScenarioPhase::failed));
         InterlockedExchange(&status->native_controller_fault,static_cast<LONG>(ControllerScenarioFault::command_failure));return;
@@ -435,7 +458,7 @@ void native_command_step(void* creator) {
     using namespace native_commands;
     const auto now=GetTickCount64();
     source_captures=primary_frames.load(std::memory_order_relaxed);
-    if(mailbox.failed())fault(StopReason::delivery);
+    if(mailbox.failed())fault(StopReason::mailbox_error);
     if(aborted.load()){neutralize();fail_demo(Error::input_owner);publish_native_commands();return;}
     if(scenario&&terminal(scenario->report().phase)&&negative_passed){
         commands_armed=false;provider_disabled=true;trial_finished=true;
@@ -492,14 +515,15 @@ void native_command_step(void* creator) {
     const auto output=scenario->tick(now,observation);
     if(output.neutralize)adapter.neutralize_guest();
     if(output.command){
-        if(receiver.observe(command_scope,*output.command,now)!=CommandReceive::accepted){fault(StopReason::delivery);neutralize();return;}
+        if(receiver.observe(command_scope,*output.command,now)!=CommandReceive::accepted){fault(StopReason::receiver_rejected);neutralize();return;}
         const auto delivery=receiver.take(now);
-        if(!delivery||!adapter.apply_guest(*delivery)){fault(StopReason::delivery);neutralize();return;}
+        if(!delivery){fault(StopReason::receiver_empty);neutralize();return;}
+        if(!adapter.apply_guest(*delivery)){fault(StopReason::command_offer);neutralize();return;}
     }
     if(provider_disabled&&terminal(scenario->report().phase)){
         if(scenario->report().fault!=ControllerScenarioFault::consumer_timeout){fault(StopReason::negative_control);neutralize();publish_native_commands();return;}
         negative_passed=true;++generation;command_scope.input_generation=generation;
-        if(!mailbox.reset_generation(generation)){fault(StopReason::delivery);neutralize();return;}
+        if(!mailbox.reset_generation(generation)){fault(StopReason::mailbox_error);neutralize();return;}
         receiver=PlayerCommandReceiver{supported};
         scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);
         provider_disabled=false;

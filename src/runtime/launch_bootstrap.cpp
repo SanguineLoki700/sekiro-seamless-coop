@@ -136,6 +136,10 @@ bool valid_initial_status() noexcept {
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
     for(const auto& item:shared->native_controller_trace)
         if(load(item.phase)||load(item.state_code)||load(item.input_generation)||load(item.frame_sequence)||load(item.elapsed_ms))return false;
+    const auto& diagnostic=shared->native_controller_mailbox;
+    if(load(diagnostic.kind)||load(diagnostic.latch_fault)||load(diagnostic.button)||load(diagnostic.expected_held)||
+        load(diagnostic.observed_held)||load(diagnostic.held_ms)||load(diagnostic.epoch))return false;
+    for(unsigned i=0;i<3;++i)if(load(diagnostic.expected_move_milli[i])||load(diagnostic.observed_move_milli[i]))return false;
     return true;
 }
 

@@ -3,6 +3,19 @@
 #include <mutex>
 
 namespace skcoop::actors {
+enum class NativeMailboxFault {
+    none,invalid_clock,clock_regressed,epoch_exhausted,overlapping_update,
+    latch_failure,invalid_source,invalid_movement,movement_mismatch,
+    invalid_held,held_mismatch,abandoned_update
+};
+struct NativeMailboxFailure {
+    NativeMailboxFault kind{};
+    NativeInputFault latch_fault{};
+    std::uint64_t epoch{};
+    PlayerInput expected,observed;
+    CommandButton button{};
+    float held_duration{};
+};
 struct NativeInputFrame {
     std::uint64_t epoch{};
     PlayerInput input;
@@ -45,12 +58,16 @@ public:
     // old completion must retire it before any reset can become effective.
     bool reset_generation(std::uint64_t new_generation);
     bool failed()const;
+    // First failure for this mailbox object, preserved across suspend/reset.
+    // Values are captured before neutralization and are diagnostics only.
+    NativeMailboxFailure failure()const;
 private:
     mutable std::mutex mutex_;
     NativeInputLatch latch_;
     Clock clock_{};
     std::uint64_t generation_{},epoch_counter_{},clock_at_{},issued_at_{},completed_at_{},flight_epoch_{};
     NativeInputFrame frame_;
+    NativeMailboxFailure failure_;
     bool clock_seen_{},failed_{},in_flight_{},association_{},ready_{};
     bool resolver_gate_{},resolver_speed_{},resolver_angle_{},attack_seen_{},guard_seen_{};
     MovementIntent resolved_movement_;
@@ -59,7 +76,8 @@ private:
     bool now_locked(std::uint64_t&);
     bool advance_epoch_locked();
     void invalidate_locked();
-    void fail_locked();
+    void record_failure_locked(NativeMailboxFault,std::optional<PlayerInput> observed={},CommandButton button={},float held_duration=0);
+    void fail_locked(NativeMailboxFault,std::optional<PlayerInput> observed={},CommandButton button={},float held_duration=0);
     bool matches_locked(std::uint64_t)const;
     bool fresh_locked(std::uint64_t)const;
 };

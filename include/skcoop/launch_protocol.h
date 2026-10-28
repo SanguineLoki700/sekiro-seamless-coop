@@ -51,6 +51,11 @@ struct alignas(8) NativeControllerTrace {
     volatile LONG phase,state_code;
     volatile LONG64 input_generation,frame_sequence,elapsed_ms;
 };
+struct alignas(8) NativeMailboxDiagnostic {
+    volatile LONG kind,latch_fault,button,expected_held,observed_held,held_ms;
+    volatile LONG expected_move_milli[3],observed_move_milli[3];
+    volatile LONG64 epoch;
+};
 struct alignas(8) SharedStatus {
     std::uint32_t struct_size;
     std::uint32_t version;
@@ -135,6 +140,7 @@ struct alignas(8) SharedStatus {
     volatile LONG64 native_controller_input_queries,native_controller_resolvers,
         native_controller_held_queries,native_controller_pressed_queries;
     NativeControllerTrace native_controller_trace[native_trace_capacity];
+    NativeMailboxDiagnostic native_controller_mailbox;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);
