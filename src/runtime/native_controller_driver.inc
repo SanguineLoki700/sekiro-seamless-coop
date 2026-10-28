@@ -7,36 +7,35 @@ constexpr ButtonMask supported=button_mask(CommandButton::attack)|button_mask(Co
 struct Binding {Token world{},primary{},registry{},actor{},controller{},component{},behavior{},requests{},root{};
     std::uint32_t actor_handle{},primary_handle{};};
 struct PadScope {
-    bool guest{},usable{};
+    bool guest{},usable{},axes_ready{},completion_called{};
+    Token controller{};
     int logical{-1},raw_code{-1};
     PlayerInput supplied,captured;
     NativeStickAxes axes;
-    std::array<float,2> source_axes{};
-    unsigned source_axes_seen{};
-    std::optional<NativeInputSource> identity;
+    NativeInputFrame frame;
 };
 thread_local PadScope* pad_scope{};
-struct ParameterScope {Token actor{},character{},overrides{};bool gate_seen{},speed_seen{},angle_seen{};float speed{},angle{};};
+struct ParameterScope {Token actor{},character{},overrides{};std::uint64_t epoch{};bool gate_seen{},speed_seen{},angle_seen{};float speed{},angle{};};
 thread_local ParameterScope* parameter_scope{};
 std::atomic<Token> owned_controller{},owned_actor{},primary_controller{};
 std::atomic<DWORD> owner_thread{};
 std::atomic<bool> aborted{};
 std::atomic<bool> retired{};
+std::atomic<bool> trial_finished{};
 Binding guest,source;
+std::mutex primary_lock;
 PlayerInput primary_input;
 PlayerCommandCapture primary_capture{1,supported};
-std::uint64_t primary_at{},guest_at{},sample_sequence{},consumed_at{},consumed_sequence{};
-PlayerInput resolved_input;
-bool consumer_valid{},held_observed{},resolver_completed{},provider_disabled{true},negative_passed{};
-unsigned native_held_seen{};
-ButtonMask native_held{};
-std::optional<NativeInputSource> produced;
+std::uint64_t primary_at{};
+std::atomic<bool> provider_disabled{true},commands_armed{};
+bool negative_passed{};
 std::optional<ControllerScenario> scenario;
 PlayerCommandReceiver receiver{supported};
-NativeInputLatch latch{1};
+std::uint64_t native_milliseconds() noexcept {return GetTickCount64();}
+NativeCommandMailbox mailbox{1,&native_milliseconds};
 CommandScope command_scope;
 std::uint64_t generation{1},load_at{},neutral_at{},last_world_at{},negative_at{};
-std::uint64_t native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{};
+std::atomic<std::uint64_t> native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{},primary_frames{};
 int state_code{};
 Token state_character{},state_values{},state_entries{},state_storage{};
 int state_slot{-1};
@@ -66,10 +65,13 @@ enum class StopReason:LONG {none,internal,ownership,wrong_thread,invalid_delta,s
     source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow};
 void fault(StopReason reason=StopReason::internal) noexcept {
     InterlockedCompareExchange(&status->native_controller_reason,static_cast<LONG>(reason),0);
+    commands_armed.store(false,std::memory_order_release);
     aborted.store(true,std::memory_order_release);
+    trial_finished.store(true,std::memory_order_release);
 }
 void retire() noexcept {
-    fault(StopReason::ownership);retired.store(true,std::memory_order_release);
+    if(!trial_finished.load(std::memory_order_acquire))fault(StopReason::ownership);
+    retired.store(true,std::memory_order_release);
     owned_controller.store(0,std::memory_order_release);owned_actor.store(0,std::memory_order_release);
     primary_controller.store(0,std::memory_order_release);
 }
@@ -107,7 +109,8 @@ bool guarded_verify(const Binding& b,bool ready=false) noexcept {
     __try {result=verify(b,ready);}__except(EXCEPTION_EXECUTE_HANDLER){result=false;}
     return result;
 }
-void neutralize() noexcept {latch.suspend();produced.reset();consumer_valid=false;}
+void neutralize() noexcept {try {mailbox.suspend();}catch(...){fault();}}
+std::uint64_t consumer_epoch() noexcept {try {return mailbox.current_epoch();}catch(...){fault();return 0;}}
 
 // Read native results with their actual metadata type. The observed Stand state
 // is diagnostic; an unknown state number is never classified as attack/guard.
@@ -132,20 +135,28 @@ void read_outputs(NativePlayerState& result) {
     const auto position=game.position(guest.actor);
     if(!valid_position(position))throw InputFailure{Error::input_value};
     result.valid=result.ready=true;result.position={position[0],position[1],position[2]};
-    if(consumer_valid){result.consumed_input_generation=generation;result.consumed_frame_sequence=consumed_sequence;}
-    state_code=read_state();
+    if(const auto consumed=mailbox.consumed()){
+        result.consumed_input_generation=consumed->source.input_generation;
+        result.consumed_frame_sequence=consumed->source.frame_sequence;
+    }
+    // Action-result classification is explicitly unbound. A missing diagnostic
+    // graph variable must remain unknown, not impersonate an action or prevent
+    // testing otherwise verified input consumption and physical movement.
+    try {state_code=read_state();}catch(...){state_code=std::numeric_limits<int>::min();}
 }
 class Adapter final:public NativeControllerAdapter {
 public:
     bool capture_primary(PlayerInput& result)noexcept override {
+        if(!on_thread())return false;
+        std::lock_guard lock(primary_lock);
         const auto now=GetTickCount64();
-        if(!on_thread()||!primary_at||now<primary_at||now-primary_at>100)return false;
+        if(!primary_at||now<primary_at||now-primary_at>100)return false;
         result=primary_input;return true;
     }
     bool apply_guest(const CommandDelivery& delivery)noexcept override {
         if(!on_thread()||aborted.load())return false;
         if(provider_disabled)return true; // Deliberate provider-off negative control.
-        return latch.offer(delivery,GetTickCount64())==NativeInputOffer::accepted;
+        try {return mailbox.offer(delivery)==NativeInputOffer::accepted;}catch(...){fault(StopReason::delivery);return false;}
     }
     void neutralize_guest()noexcept override {if(on_thread())neutralize();else fault();}
     bool observe_guest(NativePlayerState& result)noexcept override {
@@ -159,17 +170,6 @@ bool guarded_observe(NativePlayerState& result)noexcept {
     return okay;
 }
 
-// Associate consumer evidence only after the original parameter resolver has
-// run AND the native behavior queried held levels on this actor's own module.
-// Latch metadata or a read-back of supplied fields alone cannot satisfy this.
-void finish_consumer() noexcept {
-    if(!provider_disabled&&produced&&resolver_completed&&native_held_seen==3&&
-       GetTickCount64()-guest_at<=100){
-        resolved_input.held=native_held;
-        consumed_sequence=produced->frame_sequence;consumed_at=GetTickCount64();
-        consumer_valid=true;held_observed=true;++sample_sequence;
-    }
-}
 int map_button(int logical) {
     const auto result=real_map(logical);
     if(pad_scope){pad_scope->logical=logical;pad_scope->raw_code=result;}
@@ -182,33 +182,49 @@ std::uint8_t raw_button(void* context,int code) {
     auto* scope=pad_scope;
     if(!scope||retired.load())return real_button(context,code);
     const bool mapped=code==scope->raw_code;const auto bit=mapped?logical_bit(scope->logical):0;
-    if(scope->guest){++native_queries;return scope->usable&&bit&&(scope->supplied.held&bit)?1u:0u;}
+    if(scope->guest){++native_queries;return scope->usable&&!aborted.load()&&bit&&(scope->supplied.held&bit)?1u:0u;}
     const auto result=real_button(context,code);
     if(mapped&&bit&&result)scope->captured.held|=bit;
     return result;
 }
+bool prepare_axes(PadScope& scope) noexcept {
+    try {
+        if(scope.supplied.movement.intensity==0){scope.axes={};scope.axes_ready=true;return true;}
+        const auto projected=project_native_stick(scope.supplied.movement,read<float>(scope.controller+0x94));
+        if(!projected)return false;
+        scope.axes=*projected;scope.axes_ready=true;return true;
+    }catch(...){return false;}
+}
+bool guarded_prepare_axes(PadScope& scope) noexcept {
+    bool okay=false;
+    __try {okay=prepare_axes(scope);}__except(EXCEPTION_EXECUTE_HANDLER){okay=false;}
+    return okay;
+}
 template<std::size_t Index> float axis(void* context) {
     auto* scope=pad_scope;
     if(!scope||retired.load())return real_axes[Index](context);
-    if(scope->guest){++native_queries;if(!scope->usable)return 0;
+    if(scope->guest){++native_queries;if(!scope->usable||aborted.load())return 0;
+        // The original Pad can update its camera/control basis after entry.
+        // Resolve world-plane intent at the actual input-query phase, then use
+        // one immutable projection for this update's raw/processed axis pairs.
+        if constexpr(Index<4)if(!scope->axes_ready&&!guarded_prepare_axes(*scope)){
+            scope->usable=false;fault(StopReason::projection);return 0;
+        }
         if constexpr(Index<2)return scope->axes.raw[Index];
         if constexpr(Index<4)return scope->axes.processed[Index-2];
         return 0;
     }
-    const auto result=real_axes[Index](context);
-    if constexpr(Index<2){scope->source_axes[Index]=result;scope->source_axes_seen|=1u<<Index;}
-    return result;
+    return real_axes[Index](context);
 }
 template<std::size_t Index> std::uint8_t flag(void* context) {
     return pad_scope&&pad_scope->guest&&!retired.load()?0:real_flags[Index](context);
 }
 void pad_before(PadScope& scope,void* controller,void* component,float delta) noexcept {
-    if(!on_thread()){fault(StopReason::wrong_thread);return;}
     if(!valid_update_delta(delta)){
         // Model streaming can stall before any commands are armed. The owned
         // guest remains virtual-neutral; only a live trial treats a tick gap as
         // a failed command lifetime. Nonfinite/negative native deltas still fail.
-        if(!std::isfinite(delta)||delta<0||scenario)fault(StopReason::invalid_delta);
+        if(!std::isfinite(delta)||delta<0||commands_armed.load())fault(StopReason::invalid_delta);
         return;
     }
     try {
@@ -217,48 +233,67 @@ void pad_before(PadScope& scope,void* controller,void* component,float delta) no
             fault(StopReason::ownership);return;
         }
         scope.usable=!aborted.load();
+        scope.controller=b.controller;
         if(scope.guest){
-            scope.supplied=scope.usable&&!provider_disabled?latch.begin_update(GetTickCount64()):PlayerInput{};
-            const auto projected=project_native_stick(scope.supplied.movement,read<float>(b.controller+0x94));
-            if(!projected){scope.usable=false;fault(StopReason::projection);return;}scope.axes=*projected;
-            scope.identity=scope.usable&&!provider_disabled?latch.source_identity():std::nullopt;
-            produced.reset();consumer_valid=false;held_observed=false;resolver_completed=false;
-            native_held_seen=0;native_held=0;guest_at=GetTickCount64();
+            if(scope.usable&&!provider_disabled){
+                scope.frame=mailbox.begin_update();
+                if(!scope.frame.accepted){scope.usable=false;fault(StopReason::delivery);return;}
+                scope.supplied=scope.frame.input;
+            }
         }
     }catch(...){scope.usable=false;fault();}
 }
 void guarded_pad_before(PadScope& scope,void* controller,void* component,float delta) noexcept {
     __try {pad_before(scope,controller,component,delta);}__except(EXCEPTION_EXECUTE_HANDLER){scope.usable=false;fault();}
 }
-void pad_after(const PadScope& scope) noexcept {
+void pad_after(PadScope& scope) noexcept {
     try {
         if(!scope.usable)return;
-        if(scope.guest){produced=scope.identity;return;}
-        if(scope.source_axes_seen!=3){fault(StopReason::source_axes);return;}
-        auto movement=movement_from_native_stick(scope.source_axes,read<float>(source.controller+0x94));
-        if(!movement){fault(StopReason::source_projection);return;}
-        primary_input={*movement,scope.captured.held};primary_at=GetTickCount64();++source_captures;
+        if(scope.guest){if(scope.frame.accepted){mailbox.finish_update(scope.frame.epoch);scope.completion_called=true;}return;}
+        if(trial_finished.load(std::memory_order_acquire))return;
+        // This is the native Pad's contextualized result, observed before the
+        // behavior/action selection. It is source input, not an animation event
+        // and not a vector copied into the destination controller.
+        const auto direction=read<Vector>(source.controller+0x10);
+        if(!valid_position(direction))throw InputFailure{Error::input_value};
+        const auto intensity=std::hypot(direction[0],direction[2]);
+        if(intensity>1.001f)throw InputFailure{Error::input_value};
+        PlayerInput captured;captured.held=scope.captured.held;
+        if(intensity>.00001f)captured.movement={{direction[0]/intensity,direction[2]/intensity},std::min(intensity,1.f)};
+        std::lock_guard lock(primary_lock);
+        primary_input=captured;primary_at=GetTickCount64();++primary_frames;
         // Retain edges at native update frequency, before any future network
         // offer. This local trial never sends primary input to the guest.
         if(!primary_capture.capture(primary_input,primary_at))fault(StopReason::capture_overflow);
     }catch(...){fault();}
 }
-void guarded_pad_after(const PadScope& scope) noexcept {
+void guarded_pad_after(PadScope& scope) noexcept {
     __try {pad_after(scope);}__except(EXCEPTION_EXECUTE_HANDLER){fault();}
+}
+void abandon_pad(std::uint64_t epoch) noexcept {try {mailbox.abandon_update(epoch);}catch(...){fault();}}
+void invoke_pad(PadScope& scope,void* controller,float delta,void* component) {
+    bool completed=false;
+    __try {
+        invoke_native_scoped(pad_scope,scope,real_pad,controller,delta,component);
+        regions.begin();guarded_pad_after(scope);regions.end();completed=true;
+    }__finally {
+        if(scope.guest&&scope.frame.accepted&&(!completed||!scope.completion_called)){
+            abandon_pad(scope.frame.epoch);
+        }
+    }
 }
 void pad_update(void* controller,float delta,void* component) {
     const auto address=reinterpret_cast<Token>(controller);
     const bool is_guest=address==owned_controller.load(std::memory_order_acquire)&&address;
-    const bool is_source=address==primary_controller.load(std::memory_order_acquire)&&address&&on_thread();
+    const bool is_source=address==primary_controller.load(std::memory_order_acquire)&&address;
     if(!is_guest&&!is_source){real_pad(controller,delta,component);return;}
-    if(is_guest&&!on_thread()){fault(StopReason::wrong_thread);retire();real_pad(controller,delta,component);return;}
+    if(is_source&&trial_finished.load(std::memory_order_acquire)){real_pad(controller,delta,component);return;}
     regions.begin();const bool valid_binding=!retired.load()&&guarded_verify(is_guest?guest:source);regions.end();
     if(!valid_binding){retire();real_pad(controller,delta,component);return;}
     if(pad_scope)fault();
     PadScope scope;scope.guest=is_guest;
     regions.begin();guarded_pad_before(scope,controller,component,delta);regions.end();
-    invoke_native_scoped(pad_scope,scope,real_pad,controller,delta,component);
-    if(on_thread()){regions.begin();guarded_pad_after(scope);regions.end();}
+    invoke_pad(scope,controller,delta,component);
 }
 
 void parameters_after(const ParameterScope& scope) noexcept {
@@ -268,13 +303,12 @@ void parameters_after(const ParameterScope& scope) noexcept {
         if(!valid_position(direction))throw InputFailure{Error::input_value};
         const auto intensity=std::hypot(direction[0],direction[2]);
         if(intensity>1.001f)throw InputFailure{Error::input_value};
-        resolved_input.movement={};
-        if(intensity>.00001f)resolved_input.movement={{direction[0]/intensity,direction[2]/intensity},std::min(intensity,1.f)};
+        MovementIntent movement;
+        if(intensity>.00001f)movement={{direction[0]/intensity,direction[2]/intensity},std::min(intensity,1.f)};
         // Returning from B49D30, or rereading controller+10, does not prove the
         // formerly skipped branch ran. Require its scoped predicate and actual
         // original engine writes into this guest's own behavior parameters.
-        resolver_completed=scope.gate_seen&&scope.speed_seen&&scope.angle_seen;
-        if(resolver_completed)++native_resolvers;finish_consumer();
+        if(mailbox.observe_resolver(scope.epoch,movement,scope.gate_seen,scope.speed_seen,scope.angle_seen))++native_resolvers;
     }catch(...){fault();}
 }
 void guarded_parameters_after(const ParameterScope& scope) noexcept {
@@ -285,6 +319,7 @@ bool prepare_parameters(ParameterScope& scope) noexcept {
         if(!relationships(guest,true))return false;
         const auto graph=pointer(guest.behavior+0x10);
         scope.actor=guest.actor;scope.character=pointer(graph+0x28);scope.overrides=graph+0x98;
+        scope.epoch=consumer_epoch();
         return true;
     }catch(...){return false;}
 }
@@ -294,7 +329,8 @@ bool guarded_prepare_parameters(ParameterScope& scope) noexcept {
     return okay;
 }
 void parameters(void* behavior) {
-    const bool selected=!retired.load()&&on_thread()&&reinterpret_cast<Token>(behavior)==guest.behavior&&guest.actor;
+    const auto owned=owned_actor.load(std::memory_order_acquire);
+    const bool selected=owned&&!retired.load()&&reinterpret_cast<Token>(behavior)==guest.behavior&&guest.actor==owned;
     if(!selected){real_parameters(behavior);return;}
     ParameterScope scope;
     regions.begin();const bool okay=guarded_prepare_parameters(scope);regions.end();
@@ -319,19 +355,21 @@ void observe_graph_set(const GraphVariable* variable,float value) {
     if(variable->index==209){parameter_scope->angle_seen=true;parameter_scope->angle=value;}
 }
 float held(void* module,int index) {
+    const auto owned=owned_actor.load(std::memory_order_acquire);
+    const bool selected=owned&&!retired.load()&&reinterpret_cast<Token>(module)==guest.requests&&guest.actor==owned&&(index==0||index==2);
+    const auto epoch=selected?consumer_epoch():0;
     const auto result=real_held(module,index);
-    if(!retired.load()&&on_thread()&&reinterpret_cast<Token>(module)==guest.requests&&guest.actor&&(index==0||index==2)){
+    if(selected&&!retired.load()){
         ++native_held_queries;
         if(!std::isfinite(result)||result<0){fault();return result;}
-        const auto seen=index==0?1u:2u;native_held_seen|=seen;
-        const auto bit=logical_bit(index);if(result>0)native_held|=bit;else native_held&=~bit;
-        finish_consumer();
+        try {mailbox.observe_held(epoch,index==0?CommandButton::attack:CommandButton::guard,result);}catch(...){fault();}
     }
     return result;
 }
 std::uint8_t pressed(void* module,int kind,int index) {
     const auto result=real_pressed(module,kind,index);
-    if(!retired.load()&&on_thread()&&reinterpret_cast<Token>(module)==guest.requests&&guest.actor)++native_pressed_queries;
+    const auto owned=owned_actor.load(std::memory_order_acquire);
+    if(owned&&!retired.load()&&reinterpret_cast<Token>(module)==guest.requests&&guest.actor==owned)++native_pressed_queries;
     return result;
 }
 } // namespace native_commands
@@ -375,7 +413,7 @@ void publish_native_commands() noexcept {
     InterlockedExchange64(&status->native_controller_held_queries,static_cast<LONG64>(native_held_queries));
     InterlockedExchange64(&status->native_controller_pressed_queries,static_cast<LONG64>(native_pressed_queries));
 }
-void trace_native_command_state(std::uint64_t now) noexcept {
+void trace_native_command_state(std::uint64_t now,const std::optional<NativeConsumedInput>& consumed) noexcept {
     using namespace native_commands;
     if(!scenario)return;
     const auto phase=static_cast<LONG>(scenario->report().phase);
@@ -387,7 +425,7 @@ void trace_native_command_state(std::uint64_t now) noexcept {
     }
     auto& item=status->native_controller_trace[count];
     item.phase=phase;item.state_code=state_code;item.input_generation=static_cast<LONG64>(generation);
-    item.frame_sequence=consumer_valid?static_cast<LONG64>(consumed_sequence):0;
+    item.frame_sequence=consumed?static_cast<LONG64>(consumed->source.frame_sequence):0;
     item.elapsed_ms=static_cast<LONG64>(now-load_at);
     // Slots are immutable after this publication barrier. The host samples
     // the count first; short state transitions survive its slower UI polling.
@@ -396,6 +434,13 @@ void trace_native_command_state(std::uint64_t now) noexcept {
 void native_command_step(void* creator) {
     using namespace native_commands;
     const auto now=GetTickCount64();
+    source_captures=primary_frames.load(std::memory_order_relaxed);
+    if(mailbox.failed())fault(StopReason::delivery);
+    if(aborted.load()){neutralize();fail_demo(Error::input_owner);publish_native_commands();return;}
+    if(scenario&&terminal(scenario->report().phase)&&negative_passed){
+        commands_armed=false;provider_disabled=true;trial_finished=true;
+        neutralize();publish_native_commands();return;
+    }
     if(owned_actor.load()&&last_world_at&&now-last_world_at>250){
         neutralize();neutral_at=0;
         if(scenario)fault(StopReason::world_gap);
@@ -409,7 +454,6 @@ void native_command_step(void* creator) {
         if(scenario){fault(StopReason::focus_lost);fail_demo(Error::input_owner);}return;
     }
     if(demo.phase==Phase::failed||demo.phase==Phase::stopped){neutralize();return;}
-    if(scenario&&terminal(scenario->report().phase)&&negative_passed){neutralize();publish_native_commands();return;}
     game.creator=creator;
     Frame frame{};const bool loaded=game.sample(frame)&&frame.primary_ready;
     if(!loaded){if(owned_actor.load()){fault();neutralize();fail_demo(Error::changed_world);}else{load_at=0;neutral_at=0;}return;}
@@ -418,24 +462,33 @@ void native_command_step(void* creator) {
     // Allow the Continue transition to finish before automatic native creation.
     if(!owned_actor.load()&&now-load_at<2000)return;
     demo.tick(game);
-    if(demo.phase!=Phase::following)return;
+    if(demo.phase!=Phase::following){
+        if(demo.phase==Phase::failed||demo.phase==Phase::stopped){
+            neutralize();if(demo.error==Error::changed_world)retire();
+        }
+        return;
+    }
     PlayerInput primary;
     if(!adapter.capture_primary(primary)){neutral_at=0;if(now-load_at>30000)fault(StopReason::source_stale);return;}
     if(!scenario&&primary!=PlayerInput{}){neutral_at=0;return;}
     if(!neutral_at)neutral_at=now;
     if(!scenario&&now-neutral_at<500)return;
-    if(!scenario){negative_at=now;scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);}
+    if(!scenario){negative_at=now;scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);commands_armed=true;}
     ControllerScenarioObservation observation;
     if(!guarded_observe(observation.guest)){fault();neutralize();return;}
     observation.ownership_verified=true;observation.action_output_bound=action_output_bound;
     observation.sample_sequence=world_callbacks;observation.observed_ms=now;observation.lifetime=1;
     const auto position=game.position(source.actor);
     observation.primary_position={position[0],position[1],position[2]};observation.primary_input=primary;
-    observation.consumer_observed=consumer_valid&&consumed_at<=now&&now-consumed_at<=100;
-    observation.held_state_observed=held_observed;observation.resolved_input=resolved_input;
+    const auto consumed=provider_disabled?std::optional<NativeConsumedInput>{}:mailbox.consumed();
+    observation.guest.consumed_input_generation=consumed?consumed->source.input_generation:0;
+    observation.guest.consumed_frame_sequence=consumed?consumed->source.frame_sequence:0;
+    observation.consumer_observed=consumed.has_value();
+    observation.held_state_observed=consumed&&consumed->held_state_observed;
+    observation.resolved_input=consumed?consumed->input:PlayerInput{};
     observation.pose_setter_calls=demo.pose_writes;observation.direct_graph_writes=graph_writes;
     observation.other_driver_commands=locomotion_writes; // Legacy driver must stay off.
-    trace_native_command_state(now);
+    trace_native_command_state(now,consumed);
     const auto output=scenario->tick(now,observation);
     if(output.neutralize)adapter.neutralize_guest();
     if(output.command){
@@ -445,9 +498,11 @@ void native_command_step(void* creator) {
     }
     if(provider_disabled&&terminal(scenario->report().phase)){
         if(scenario->report().fault!=ControllerScenarioFault::consumer_timeout){fault(StopReason::negative_control);neutralize();publish_native_commands();return;}
-        negative_passed=true;provider_disabled=false;++generation;command_scope.input_generation=generation;
-        latch=NativeInputLatch{generation};receiver=PlayerCommandReceiver{supported};consumer_valid=false;
+        negative_passed=true;++generation;command_scope.input_generation=generation;
+        if(!mailbox.reset_generation(generation)){fault(StopReason::delivery);neutralize();return;}
+        receiver=PlayerCommandReceiver{supported};
         scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);
+        provider_disabled=false;
     }
     publish_native_commands();
 }

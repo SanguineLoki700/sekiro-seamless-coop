@@ -38,6 +38,8 @@ Um binding inclui mundo, registro, ator, handles observados, controlador, compon
 
 Durante a preparação, pausas de carregamento mantêm o convidado neutro e reiniciam a espera de estabilidade. Depois de armar a sequência, perda de foco, atualização expirada ou erro interrompem o teste. O recibo conserva a primeira causa de parada; não há retomada silenciosa de comandos antigos.
 
+A criação e o verificador continuam na rotina de mundo já observada. A entrada e as consultas do comportamento podem rodar nas threads de trabalho do motor. `NativeCommandMailbox` sincroniza somente os dados do mod: os métodos liberam o mutex antes das chamadas ao Sekiro. Cada atualização recebe uma identidade monotônica, e as observações de consumo só valem para aquela atualização concluída. Callback atrasado, troca de geração, pausa ou atualização sobreposta não podem validar um comando mais novo. O snapshot devolve os valores realmente observados, após conferência, e não uma cópia da solicitação.
+
 ## Cenário e resultado
 
 O assistente acrescenta **Testar controlador nativo neste PC**, reutilizando a preparação e os saves separados. A sequência cria uma vez, posiciona uma vez, aguarda estabilização e testa entrada neutra, caminhada, parada, ataque, soltura, defesa mantida e soltura. O limite total é 4 m; a caminhada exige deslocamento próprio e a parada tem verificação separada. Nenhuma correção posterior de posição, escrita manual no grafo ou enfileiramento manual HKB é permitido.

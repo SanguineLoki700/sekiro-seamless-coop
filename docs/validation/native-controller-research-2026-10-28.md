@@ -32,7 +32,7 @@ Contrato de comandos, captura por atualização, receptor com contexto de sessã
 
 Testes incluem pulsos rápidos, duplicação, reordenação, perda/expiração, geração antiga, baseline, filas inválidas, sequências com seed, ausência do provedor, observação apenas do writeback, movimento ausente, controle mantido sem prova, falta de liberação e limpeza dos escopos sob exceções. Esses testes avaliam contratos e verificadores, não a integração nativa no Sekiro.
 
-Validação local desta implementação: build MSVC x64 Release sem avisos; **32/32 suites CTest** e **26/26 testes Python** aprovados; `tools/progress.py --check` confirma 10%. O protocolo entre lançador e DLL passa a 13 e exige atualizar os binários juntos. O protocolo LAN permanece em 3; o novo modo de comandos ainda não é enviado pela rede.
+Validação local desta implementação: build MSVC x64 Release sem avisos; **33/33 suites CTest** e **26/26 testes Python** aprovados; `tools/progress.py --check` confirma 10%. A nova suite usa três threads reais para testar entrada, atualização e observação simultâneas, callbacks atrasados, falta de evidência, valores efetivamente observados e neutralização. O protocolo entre lançador e DLL passa a 13 e exige atualizar os binários juntos. O protocolo LAN permanece em 3; o novo modo de comandos ainda não é enviado pela rede.
 
 ## Sessão e pendências
 
@@ -41,5 +41,9 @@ A última sessão de pesquisa atingiu o limite de 30 minutos do host e terminou 
 Depois disso, o primeiro candidato C++ `99aab2d05396d114bb66caa45eb8bc0434546eee` foi executado na cópia protegida: hooks carregados, uma criação e um posicionamento. O teste foi interrompido durante a preparação, com **zero comandos emitidos e zero consumidos**. Houve uma pausa de 998 ms no callback; o verificador tratava pausas anteriores à sequência como falha ativa. Isso não demonstra controle ou caminhada. A saída foi normal, código 0, sem timeout, com saves pessoais, backup e gráficos preservados; os hashes dos saves foram reconferidos independentemente.
 
 A preparação foi corrigida para manter entrada neutra e aguardar estabilização antes de armar comandos. As condições de interrupção da sequência ativa permanecem. O recibo agora identifica a primeira causa interna de parada, permitindo distinguir pausa, propriedade, captura e comandos em uma próxima execução; a causa fina do primeiro corte não havia sido registrada. A correção ainda requer teste no jogo.
+
+O candidato seguinte, `75d5b68e326523a1d233e27e2615237126e0536b`, registrou a causa exata: a atualização do controlador adicional ocorreu em uma thread diferente da rotina que o criou. A exigência anterior de uma única thread interrompeu o teste antes de qualquer comando; não houve prova de movimento. O jogo encerrou normalmente, código 0, com saves pessoais, backup e gráficos preservados e hashes dos saves reconferidos independentemente.
+
+A integração foi corrigida para verificar o ator e a fase da chamada nativa, com entrega e observações sincronizadas por atualização. A caixa de comandos rejeita observações anteriores à conclusão do controlador e não combina evidências parciais de resolvers diferentes. Essa correção passou nos testes independentes; sua execução no Sekiro ainda está pendente.
 
 Ainda faltam executar o novo caminho restrito de propriedade, comprovar caminhada física com consumo downstream, vincular resultados reais de ataque/defesa e executar a sequência positiva e o controle negativo no jogo. Depois, ligar comandos versionados ao TCP existente e validar dois jogos, contato, dano e postura com autoridade do anfitrião. Não há aceitação nova de LAN, Steam, combate compartilhado ou quatro participantes.

@@ -13,6 +13,7 @@
 #include "action_native_contract.h"
 #include "skcoop/actors/controller_scenario.hpp"
 #include "skcoop/actors/native_input_latch.hpp"
+#include "skcoop/actors/native_command_mailbox.hpp"
 #include "skcoop/actors/native_input_projection.hpp"
 #include <detours.h>
 #include <TlHelp32.h>
@@ -21,6 +22,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <mutex>
+#include <limits>
 #include <cstring>
 #include <stdexcept>
 
