@@ -121,12 +121,14 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
         if (bit == 16) {
-            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion" && value != L"lan") invalid("Unknown actor_test mode.");
+            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion" && value != L"lan" && value != L"native-commands") invalid("Unknown actor_test mode.");
             result.actor_follow_test = value != L"off";
             result.actor_locomotion_test = value == L"locomotion";
             result.actor_pad_reference_test = value == L"pad-reference";
             result.actor_graph_locomotion_test = value == L"graph-locomotion";
             result.actor_lan_test = value == L"lan";
+            result.actor_native_commands_test = value == L"native-commands";
+            if(result.actor_native_commands_test)result.independent_profile=true;
         } else if(bit==128) {
             if(value!=L"independent"&&value!=L"combat-preview")invalid("Unknown LAN profile mode.");
             result.independent_profile=true;result.combat_preview=value==L"combat-preview";

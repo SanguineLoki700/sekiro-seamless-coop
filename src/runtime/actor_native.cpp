@@ -8,14 +8,19 @@
 #include "vtable_slot.h"
 #include "controller_update_abi.h"
 #include "graph_variable_abi.h"
+#include "native_call_scope.h"
 #include "action_receiver.h"
 #include "action_native_contract.h"
+#include "skcoop/actors/controller_scenario.hpp"
+#include "skcoop/actors/native_input_latch.hpp"
+#include "skcoop/actors/native_input_projection.hpp"
 #include <detours.h>
 #include <TlHelp32.h>
 #include <bcrypt.h>
 #include <intrin.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <stdexcept>
 
@@ -26,6 +31,8 @@ launch::SharedStatus* status{};
 Demo demo;
 RemoteActor remote_actor;
 bool lan_mode{},local_loaded{};
+bool native_commands_mode{};
+void adopt_native_command_actor(Token);
 launch::Payload lan_launch{};
 lan::Peer* network{}; // Pinned with the runtime. Never join/destroy under the loader lock.
 lan::View network_view{};
@@ -158,6 +165,7 @@ public:
             !typed(pointer(guest+0x58),guest_controller_table()) || pointer(pointer(guest+0x58)+0x300)!=guest ||
             pointer(world+0x88)!=p || pointer(frame.registry)!=p)
             throw std::runtime_error("Factory result/registry mismatch");
+        if(native_commands_mode)adopt_native_command_actor(guest);
         return guest;
     }
     bool actor_ready(Token p) override {
@@ -343,6 +351,7 @@ public:
 };
 NativeGame game;
 #include "action_native.inc"
+#include "native_controller_driver.inc"
 void publish() noexcept {
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(lan_mode?remote_actor.phase:demo.phase));
     InterlockedExchange(&status->actor_error,static_cast<LONG>(lan_mode?remote_actor.error:demo.error));
@@ -409,6 +418,7 @@ void lan_step(void* creator) {
 }
 void step(void* creator) noexcept {
     try {
+        if(native_commands_mode){native_command_step(creator);return;}
         if(lan_mode){lan_step(creator);return;}
         if (demo.phase==Phase::stopped || demo.phase==Phase::failed) return;
         DWORD foreground_pid{};
@@ -427,15 +437,15 @@ void step(void* creator) noexcept {
         game.creator=creator; demo.tick(game);
         if(demo.phase==Phase::stopped || demo.phase==Phase::failed)game.disarm();
     }
-    catch (const InputFailure& e) { if(actions_mode)guarded_retire_actions();fail_demo(e.error); game.disarm(); }
-    catch (...) { if(actions_mode)guarded_retire_actions();fail_demo(Error::binding); game.disarm(); }
+    catch (const InputFailure& e) { if(native_commands_mode){native_commands::fault();native_commands::neutralize();publish_native_commands();}if(actions_mode)guarded_retire_actions();fail_demo(e.error); game.disarm(); }
+    catch (...) { if(native_commands_mode){native_commands::fault();native_commands::neutralize();publish_native_commands();}if(actions_mode)guarded_retire_actions();fail_demo(Error::binding); game.disarm(); }
 }
 void guarded_step(void* creator) noexcept {
     // The worker discards pre-spawn/menu history under this same gate. Switching
     // to an active receiver and its fresh baseline is one atomic hand-off.
     if(actions_mode&&!TryAcquireSRWLockExclusive(&action_ingress))return;
     __try { step(creator); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { if(actions_mode)guarded_retire_actions();fail_demo(Error::native_fault); game.disarm(); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { if(native_commands_mode){native_commands::fault();native_commands::neutralize();publish_native_commands();}if(actions_mode)guarded_retire_actions();fail_demo(Error::native_fault); game.disarm(); }
     if(actions_mode)ReleaseSRWLockExclusive(&action_ingress);
 }
 void controller_step(void* controller,float delta,void* component) noexcept {
@@ -555,7 +565,7 @@ DWORD WINAPI worker(void*) noexcept {
     if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0) { fail_demo(Error::binding); publish(); return 0; }
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const auto start=GetTickCount64();
-    while (!anchors_match()) {
+    while (!anchors_match() || (native_commands_mode&&!native_command_anchors_match())) {
         if (GetTickCount64()-start>=180000) { fail_demo(Error::hook_timeout); publish(); return 0; }
         Sleep(250);
     }
@@ -572,10 +582,14 @@ DWORD WINAPI worker(void*) noexcept {
     original_update=reinterpret_cast<Update>(base+consumer);
     // Prevent callback work until page protection and hook ownership are settled.
     InterlockedExchange(&entered,1);
+    if(native_commands_mode&&!install_native_command_hooks()) {
+        fail_demo(Error::hook_conflict);publish();InterlockedExchange(&entered,0);return 0;
+    }
     if(actions_mode&&!install_action_hooks()){
         fail_demo(Error::hook_conflict);publish();InterlockedExchange(&entered,0);return 0;
     }
     if(!exchange_vtable_slot(slot,reinterpret_cast<void*>(original_update),reinterpret_cast<void*>(&update))) {
+        if(native_commands_mode)install_native_command_hooks(true);
         if(actions_mode)install_action_hooks(true);
         fail_demo(Error::hook_conflict); publish(); InterlockedExchange(&entered,0); return 0;
     }
@@ -596,6 +610,7 @@ DWORD WINAPI worker(void*) noexcept {
     }
     InterlockedOr64(&status->hooks_mask,(demo.native_locomotion && !graph_locomotion)?14:2);
     if(actions_mode)InterlockedOr64(&status->hooks_mask,16);
+    if(native_commands_mode)InterlockedOr64(&status->hooks_mask,32);
     InterlockedExchange(&entered,0);
     if(lan_mode){
         // Publish socket readiness even while the title screen has no world
@@ -628,13 +643,16 @@ DWORD WINAPI worker(void*) noexcept {
 bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode,const launch::Payload* config) noexcept {
     if (status || !shared) return false;
     lan_mode=mode==launch::ActorTest::lan;
+    native_commands_mode=mode==launch::ActorTest::native_commands;
+    if(native_commands_mode&&!config)return false;
+    if(native_commands_mode)native_command_configure(*config);
     if(lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
     status=shared;
     actions_mode=lan_mode&&lan_launch.lan_profile!=0;
     combat_preview=lan_mode&&lan_launch.lan_profile==2;
     graph_locomotion=mode==launch::ActorTest::graph_locomotion||lan_mode;
     demo.native_locomotion=mode==launch::ActorTest::locomotion || graph_locomotion;
-    demo.native_pad_reference=mode==launch::ActorTest::pad_reference;
+    demo.native_pad_reference=mode==launch::ActorTest::pad_reference||native_commands_mode;
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(Phase::waiting));
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
     if (!thread) { status=nullptr; return false; }

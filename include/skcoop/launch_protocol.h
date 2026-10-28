@@ -12,8 +12,8 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=12;
-enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5 };
+inline constexpr std::uint32_t protocol_version=13;
+enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
 
@@ -46,6 +46,11 @@ struct Payload {
 // Shared status is only fixed-width data. Use InterlockedExchange/Increment and
 // InterlockedCompareExchange for fields modified/read across processes; 64-bit
 // counters are naturally aligned. Runtime never owns/deletes the host's files.
+inline constexpr std::size_t native_trace_capacity=128;
+struct alignas(8) NativeControllerTrace {
+    volatile LONG phase,state_code;
+    volatile LONG64 input_generation,frame_sequence,elapsed_ms;
+};
 struct alignas(8) SharedStatus {
     std::uint32_t struct_size;
     std::uint32_t version;
@@ -120,6 +125,16 @@ struct alignas(8) SharedStatus {
     volatile LONG64 action_attack_captured,action_attack_replayed;
     volatile LONG64 action_guard_enter_captured,action_guard_exit_captured;
     volatile LONG64 action_guard_enter_replayed,action_guard_exit_replayed;
+    volatile LONG native_controller_phase,native_controller_fault;
+    volatile LONG native_controller_state_code,native_controller_output_bound;
+    volatile LONG native_controller_negative_passed,native_controller_trace_count;
+    volatile LONG native_controller_trace_overflow,native_controller_padding;
+    volatile LONG64 native_controller_commands,native_controller_consumed,
+        native_controller_guard_ms,native_controller_displacement_mm,
+        native_controller_manual_events,native_controller_primary_writes;
+    volatile LONG64 native_controller_input_queries,native_controller_resolvers,
+        native_controller_held_queries,native_controller_pressed_queries;
+    NativeControllerTrace native_controller_trace[native_trace_capacity];
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);

@@ -188,6 +188,20 @@ void reader_is_bounded_read_only_and_handles_unicode_path() {
     fixture.write(ini() + std::string("\xff", 1));
     invalid([&] { (void)read_launch_settings(fixture.path()); });
 }
+void native_commands_are_explicit_without_lan_state(){
+    const auto native=parse_launch_settings(ini()+"actor_test=native-commands\n");
+    require(native.actor_native_commands_test&&native.actor_follow_test&&native.independent_profile,
+        "Native commands must explicitly select an independent test profile.");
+    require(!native.actor_lan_test&&!native.actor_locomotion_test&&!native.actor_pad_reference_test&&
+        !native.actor_graph_locomotion_test&&!native.combat_preview&&!native.lan_role&&native.lan_code.empty(),
+        "Native commands inherited another driver or room settings.");
+    require(!parse_launch_settings(ini()).actor_native_commands_test,"Native commands became the default.");
+    const std::string code="SKL1|127.0.0.1|24860|11111111111111111111111111111111|2222222222222222222222222222222222222222222222222222222222222222";
+    for(const auto suffix:{std::string("lan_role=host\n"),std::string("lan_code=")+code+"\n",std::string("lan_profile=independent\n"),std::string("lan_profile=combat-preview\n"),std::string("lan_role=guest\nlan_code=")+code+"\n"})
+        invalid([&]{(void)parse_launch_settings(ini()+"actor_test=native-commands\n"+suffix);});
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=native_commands\n");});
+    invalid([&]{(void)parse_launch_settings(ini()+"actor_test=native-commands\nactor_test=lan\n");});
+}
 } // namespace
 
 int main() {
@@ -214,7 +228,8 @@ int main() {
     invalid([&]{(void)parse_launch_settings(ini()+"actor_test=lan\nlan_role=host\nlan_code=broken\n");});
     invalid([&] { (void)parse_launch_settings(ini()+"actor_test=true\n"); });
     invalid([&] { (void)parse_launch_settings(ini()+"actor_test=follow\nactor_test=off\n"); });
-    const std::array<std::pair<std::string_view, std::function<void()>>, 11> tests{{
+    const std::array<std::pair<std::string_view, std::function<void()>>, 12> tests{{
+        {"native_commands_are_explicit_without_lan_state", native_commands_are_explicit_without_lan_state},
         {"valid_values_are_preserved", valid_values_are_preserved},
         {"unicode_bom_crlf_comments_and_whitespace", unicode_bom_crlf_comments_and_whitespace},
         {"every_key_is_required_and_nonempty", every_key_is_required_and_nonempty},

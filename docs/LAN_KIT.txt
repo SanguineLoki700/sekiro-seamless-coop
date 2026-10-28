@@ -55,3 +55,10 @@ confirmacao nos dois jogos; as novas acoes ainda precisam de verificacao.
 
 Nao redistribua a pasta depois de usa-la: ela passa a conter perfis e registros
 privados. Para o outro computador use somente o ZIP original publicado.
+
+Pesquisa local do controlador nativo (somente quando orientado):
+Use "Testar controlador nativo neste PC", escolha Continuar e fique parado
+em um trecho plano, sem inimigos. Mantenha o jogo em foco por 15 segundos.
+O segundo personagem recebe comandos automaticos; nao use F8 nem imite acoes.
+O resultado pode ser inconclusivo: esta versao ainda investiga a leitura das
+acoes efetivamente produzidas pelo motor. Ela nao concede pontos de progresso.

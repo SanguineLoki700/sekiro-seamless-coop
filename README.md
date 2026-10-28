@@ -14,7 +14,9 @@ A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md), fei
 
 **Incremento experimental de ações:** o [teste local com um PC](docs/validation/local-actions-2026-10-26.md) confirmou visualmente corrida, salto e esquiva do segundo personagem usando a integração C++, com saída normal e saves pessoais preservados. Os [testes de ações](docs/ACTION_TEST.md) entre dois jogos continuam pendentes; o pacote público anterior permanece como a referência de movimento já observada.
 
-**Candidato local:** [ataques e defesa](docs/COMBAT_PREVIEW.md) têm um botão de teste integrado ao assistente, sem notebook ou auxiliar externo. O participante confirmou os ataques no personagem adicional; a defesa ainda produz apenas um toque, sem sustentação. A parada prematura veio do limite de trajeto do teste; a correção permite pausar e retomar ao voltar à área e passou nos testes independentes. Acertos, dano e postura compartilhados continuam pendentes.
+**Trabalho atual: [controlador remoto nativo](docs/NATIVE_CONTROLLER.md).** A base existente é preservada, e o novo modo encaminha intenções de jogador ao controlador exclusivo do ator. Contratos, adaptador experimental e cenário automático estão implementados; o caminho de propriedade e os resultados das ações ainda exigem prova no jogo. O verificador distingue diagnóstico inconclusivo de aceitação. Não há fallback silencioso para eventos HKB.
+
+O [teste anterior de ataques e defesa](docs/COMBAT_PREVIEW.md) permanece como diagnóstico legado: ataques vistos, defesa sustentada não confirmada. Não ampliaremos esse catálogo como fundamento do multiplayer. Acertos, dano e postura compartilhados continuam pendentes.
 
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
@@ -52,7 +54,7 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 - Sonda de pesquisa separada com identidade exata e modos [`--actors`](docs/ACTOR_RESEARCH.md#sonda-pública-de-leitura) e [`--creator`](docs/ACTOR_CREATION.md#nova-sonda-reproduzível) para conferir campos, tipos e uma tabela selecionada no Sekiro aberto, somente com leitura.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
-O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. O fluxo está integrado ao lançador para testes explícitos; o personagem remoto real, visível e controlável permanece pendente.
+O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. Criação e movimento básico de atores adicionais já têm provas parciais; o controle nativo completo e o combate permanecem pendentes.
 
 A observação local com RTTI identificou `WorldChrManImp` e `PlayerIns`; a sonda reconferiu o jogador e os registros selecionados sem alterar o jogo. Isso não estabelece o layout completo, criação ou controle de um ator remoto. Veja a [pesquisa de personagens e suas limitações](docs/ACTOR_RESEARCH.md).
 

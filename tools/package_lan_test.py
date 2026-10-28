@@ -24,7 +24,7 @@ def package(binary_dir: Path, output: Path) -> None:
     manifest = {
         "kind": "owner-lan-actions-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 12,
+        "launch_protocol": 13,
         "native_motion_adapter": 4,
         "automatic_lan_discovery": True,
         "save_mode": "independent-per-steam-account",
@@ -39,6 +39,13 @@ def package(binary_dir: Path, output: Path) -> None:
             "authoritative_damage": False,
         },
         "native_two_game_action_acceptance": False,
+        "native_controller_trial": {
+            "local_only": True,
+            "automatic_independent_commands": True,
+            "input_backend_verified_in_game": False,
+            "action_output_binding_verified": False,
+            "legacy_hkb_fallback": False,
+        },
         "game": "Sekiro Steam build 5794815 / 1.06",
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "files": {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()},
