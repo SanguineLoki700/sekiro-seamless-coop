@@ -356,9 +356,19 @@ std::string counters(const SharedStatus& s) {
         <<",\"trace_overflow\":"<<load(s.native_controller_trace_overflow)<<",\"trace\":[";
     const auto count=std::clamp<LONG>(load(s.native_controller_trace_count),0,static_cast<LONG>(launch::native_trace_capacity));
     for(LONG i=0;i<count;++i){const auto& item=s.native_controller_trace[i];if(i)value<<',';
+        const auto flags=load(item.observation_flags);
         value<<"{\"phase\":"<<load(item.phase)<<",\"state_code\":"<<load(item.state_code)
             <<",\"generation\":"<<load(item.input_generation)<<",\"frame\":"<<load(item.frame_sequence)
-            <<",\"elapsed_ms\":"<<load(item.elapsed_ms)<<'}';}
+            <<",\"elapsed_ms\":"<<load(item.elapsed_ms)<<",\"observation_flags\":"<<flags<<",\"position_mm\":";
+        if(flags&launch::native_trace_position_valid)
+            value<<'['<<load(item.position_mm[0])<<','<<load(item.position_mm[1])<<','<<load(item.position_mm[2])<<']';
+        else value<<"null";
+        value<<",\"resolved_input\":";
+        if(flags&launch::native_trace_consumption_valid)
+            value<<"{\"movement_milli\":["<<load(item.resolved_milli[0])<<','<<load(item.resolved_milli[1])<<','<<load(item.resolved_milli[2])
+                <<"],\"held\":"<<load(item.held_mask)<<'}';
+        else value<<"null";
+        value<<'}';}
     value<<"],\"mailbox_failure\":";
     const auto& diagnostic=s.native_controller_mailbox;const auto kind=load(diagnostic.kind);
     if(!kind)value<<"null";
@@ -366,8 +376,8 @@ std::string counters(const SharedStatus& s) {
         value<<"{\"kind\":"<<kind<<",\"latch_fault\":"<<load(diagnostic.latch_fault)<<",\"epoch\":"<<load(diagnostic.epoch)
             <<",\"button_mask\":"<<load(diagnostic.button)<<",\"expected_held\":"<<load(diagnostic.expected_held)
             <<",\"observed_held\":"<<load(diagnostic.observed_held)<<",\"held_ms\":"<<load(diagnostic.held_ms)
-            <<",\"expected_move_milli\":["<<load(diagnostic.expected_move_milli[0])<<','<<load(diagnostic.expected_move_milli[1])<<','<<load(diagnostic.expected_move_milli[2])
-            <<"],\"observed_move_milli\":["<<load(diagnostic.observed_move_milli[0])<<','<<load(diagnostic.observed_move_milli[1])<<','<<load(diagnostic.observed_move_milli[2])<<"]}";
+            <<",\"expected_move_micro\":["<<load(diagnostic.expected_move_micro[0])<<','<<load(diagnostic.expected_move_micro[1])<<','<<load(diagnostic.expected_move_micro[2])
+            <<"],\"observed_move_micro\":["<<load(diagnostic.observed_move_micro[0])<<','<<load(diagnostic.observed_move_micro[1])<<','<<load(diagnostic.observed_move_micro[2])<<"]}";
     }
     const auto& movement=s.native_controller_movement;
     const auto pad_epoch=load(movement.pad_epoch),consumer_epoch=load(movement.consumer_epoch),resolver_epoch=load(movement.resolver_epoch);
@@ -593,7 +603,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
         if(observer)observer(launch_snapshot(*shared,receipt_name));
-        ULONGLONG actor_report_at{};std::array<LONG,12> previous_signal{};
+        ULONGLONG actor_report_at{};std::array<LONG,13> previous_signal{};
         bool actor_samples_full{};
         for(;;) {
             require(primary.expected_state()&&backup.expected_state(),"An originally absent personal save appeared outside the isolated profile; the test was stopped without deleting it");
@@ -603,7 +613,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
             if(observer)observer(launch_snapshot(*shared,receipt_name));
-            const std::array<LONG,12> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error),load(shared->action_error),load(shared->native_controller_phase),load(shared->native_controller_fault),load(shared->native_controller_state_code),load(shared->native_controller_output_bound)};
+            const std::array<LONG,13> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error),load(shared->action_error),load(shared->native_controller_phase),load(shared->native_controller_fault),load(shared->native_controller_state_code),load(shared->native_controller_output_bound),load(shared->native_controller_trace_count)};
             if(options.actor_follow_test && !actor_samples_full && (GetTickCount64()-actor_report_at>=(options.independent_profile?30000u:1000u)||signal!=previous_signal)) {
                 previous_signal=signal;
                 actor_report_at=GetTickCount64();

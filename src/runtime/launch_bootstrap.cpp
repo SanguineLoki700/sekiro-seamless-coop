@@ -134,12 +134,15 @@ bool valid_initial_status() noexcept {
         &shared->native_controller_held_queries,&shared->native_controller_pressed_queries};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
-    for(const auto& item:shared->native_controller_trace)
-        if(load(item.phase)||load(item.state_code)||load(item.input_generation)||load(item.frame_sequence)||load(item.elapsed_ms))return false;
+    for(const auto& item:shared->native_controller_trace){
+        if(load(item.phase)||load(item.state_code)||load(item.input_generation)||load(item.frame_sequence)||
+            load(item.elapsed_ms)||load(item.held_mask)||load(item.observation_flags))return false;
+        for(unsigned i=0;i<3;++i)if(load(item.position_mm[i])||load(item.resolved_milli[i]))return false;
+    }
     const auto& diagnostic=shared->native_controller_mailbox;
     if(load(diagnostic.kind)||load(diagnostic.latch_fault)||load(diagnostic.button)||load(diagnostic.expected_held)||
         load(diagnostic.observed_held)||load(diagnostic.held_ms)||load(diagnostic.epoch))return false;
-    for(unsigned i=0;i<3;++i)if(load(diagnostic.expected_move_milli[i])||load(diagnostic.observed_move_milli[i]))return false;
+    for(unsigned i=0;i<3;++i)if(load(diagnostic.expected_move_micro[i])||load(diagnostic.observed_move_micro[i]))return false;
     const auto& movement=shared->native_controller_movement;
     if(load(movement.query_mask)||load(movement.yaw_milli)||load(movement.speed_milli)||load(movement.angle_milli)||
         load(movement.pad_epoch)||load(movement.consumer_epoch)||load(movement.resolver_epoch))return false;

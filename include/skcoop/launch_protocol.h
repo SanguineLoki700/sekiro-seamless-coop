@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=13;
+inline constexpr std::uint32_t protocol_version=14;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -47,13 +47,19 @@ struct Payload {
 // InterlockedCompareExchange for fields modified/read across processes; 64-bit
 // counters are naturally aligned. Runtime never owns/deletes the host's files.
 inline constexpr std::size_t native_trace_capacity=128;
+inline constexpr LONG native_trace_position_valid=1,native_trace_consumption_valid=2,native_trace_tail_complete=4;
 struct alignas(8) NativeControllerTrace {
     volatile LONG phase,state_code;
     volatile LONG64 input_generation,frame_sequence,elapsed_ms;
+    // Position is relative to the trial origin, never an absolute coordinate.
+    // resolved_milli is [world direction X, world direction Z, intensity].
+    volatile LONG position_mm[3],resolved_milli[3],held_mask,observation_flags;
+    // Flags: position_valid, consumption_valid, tail_complete (position only).
+    // A tail marker supplies no input evidence without consumption_valid.
 };
 struct alignas(8) NativeMailboxDiagnostic {
     volatile LONG kind,latch_fault,button,expected_held,observed_held,held_ms;
-    volatile LONG expected_move_milli[3],observed_move_milli[3];
+    volatile LONG expected_move_micro[3],observed_move_micro[3]; // 1e-6 units; direction X/Z, intensity.
     volatile LONG64 epoch;
 };
 struct alignas(8) NativeMovementDiagnostic {
@@ -156,5 +162,6 @@ static_assert(std::is_standard_layout_v<SharedStatus> && std::is_trivially_copya
 static_assert(offsetof(SharedStatus,hooks_mask)%8==0);
 static_assert(offsetof(SharedStatus,action_captured)%8==0 && offsetof(SharedStatus,action_unsupported_source)%8==0);
 static_assert(offsetof(SharedStatus,action_attack_captured)%8==0);
+static_assert(sizeof(NativeControllerTrace)==64 && alignof(NativeControllerTrace)==8);
 static_assert(sizeof(Payload)<65536);
 } // namespace skcoop::launch

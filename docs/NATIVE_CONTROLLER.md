@@ -16,6 +16,8 @@ O lançador, assistente, instalação de teste, perfis `.co2`, backups, DLL, ide
 
 O progresso permanece em **10%**. Código, ferramentas, testes simulados ou um resultado inconclusivo não concedem pontos.
 
+A rodada mais recente consumiu comandos móveis e registrou 0,666 m de avanço na direção comandada, com uma criação e apenas o posicionamento inicial. A sequência parou na verificação da parada, antes de ataque e defesa. Esse resultado parcial não conclui o controlador nem altera os pontos.
+
 ## Contratos e controle
 
 `PlayerCommand` separa intenção de ação, estado mantido e transições ordenadas de pressionar/soltar. Sequência, tempo e geração acompanham o comando. O contexto confiável do receptor acrescenta a encarnação da sessão, conexão e jogador; esses identificadores não são aceitos apenas porque um pacote os declara. A captura retém transições a cada atualização, antes de um envio mais lento. Os snapshots de estado existentes e a observação `NativePlayerState` continuam separados dos comandos.
@@ -35,6 +37,8 @@ Foi identificado um teste de papel que exclui jogadores adicionais do cálculo d
 O observador exige chamadas nativas originais que escrevem os parâmetros do grafo do próprio convidado, além da visita ao teste de papel e das consultas nativas de controles mantidos. Ler de volta o comando ou o vetor fornecido pelo adaptador não basta. A observação dessas escritas não as transforma em comandos de rede, e o adaptador não chama o setter do grafo.
 
 A direção é observada no getter chamado pelo cálculo nativo de movimento, imediatamente antes da instrução que a lê. O diagnóstico conserva o primeiro comando de caminhada em três pontos: após o Pad, na leitura do consumidor e após o resolver. Os estágios têm marcadores imutáveis e só recebem a atualização comprovada pelos checks anteriores e posteriores à leitura.
+
+O protocolo entre lançador e DLL passa a **14**, exigindo os binários correspondentes. O recibo também conserva posições relativas e consumo confirmado durante a liberação do movimento, em intervalos de pelo menos 50 ms, incluindo o primeiro neutro confirmado, e uma cauda física de 1,2 segundo após a interrupção. A cauda mantém controles neutros, não muda o resultado e não transforma entrada solicitada em prova de consumo. Posição ou consumo indisponíveis aparecem como desconhecidos; o marcador final exige posição válida, propriedade ainda publicada e coleta sem lacunas acima de 250 ms. O índice do histórico é publicado depois de preencher cada entrada. Diferenças de input na primeira falha passam a usar resolução de um milionésimo.
 
 A quinta rodada confirmou eixos fornecidos não nulos, mas vetor zero já ao sair do Pad. O filtro depende do stick anterior. A sexta passou desse zero e encontrou uma diferença entre a intenção de direção e o movimento produzido enquanto o corpo vira. Duas sequências privadas automáticas, com os dois eixos e ambos os sentidos, comprovaram intenção correta e chamada nativa de giro; o vetor físico se alinhou duas atualizações depois. A conversão dos eixos foi preservada.
 

@@ -41,6 +41,9 @@ std::uint64_t native_milliseconds() noexcept {return GetTickCount64();}
 NativeCommandMailbox mailbox{1,&native_milliseconds,NativeMovementOnset::defer_verified_steering};
 CommandScope command_scope;
 std::uint64_t generation{1},load_at{},neutral_at{},last_world_at{},negative_at{};
+std::uint64_t physical_trace_at{},terminal_trace_at{},terminal_trace_last{};
+std::array<float,3> physical_trace_origin{};
+bool physical_trace_origin_set{},terminal_trace_done{},terminal_trace_coherent{true},release_neutral_traced{};
 std::atomic<std::uint64_t> native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{},primary_frames{};
 int state_code{};
 Token state_character{},state_values{},state_entries{},state_storage{};
@@ -90,6 +93,10 @@ bool on_thread() noexcept {return owner_thread.load(std::memory_order_acquire)==
 LONG metric_milli(float value) noexcept {
     if(!std::isfinite(value))return std::numeric_limits<LONG>::min();
     return static_cast<LONG>(std::llround(std::clamp(static_cast<double>(value)*1000.,-2147483647.,2147483647.)));
+}
+LONG metric_micro(float value) noexcept {
+    if(!std::isfinite(value))return std::numeric_limits<LONG>::min();
+    return static_cast<LONG>(std::llround(std::clamp(static_cast<double>(value)*1000000.,-2147483647.,2147483647.)));
 }
 bool relationships(const Binding& b,bool graph_ready=false) {
     if(!b.actor||!b.world||!b.registry||pointer(base+0x3d7a1e0)!=b.world||
@@ -536,7 +543,7 @@ void publish_native_commands() noexcept {
             InterlockedExchange(&diagnostic.held_ms,metric_milli(failure.held_duration));
             const float expected[]{failure.expected.movement.direction[0],failure.expected.movement.direction[1],failure.expected.movement.intensity};
             const float observed[]{failure.observed.movement.direction[0],failure.observed.movement.direction[1],failure.observed.movement.intensity};
-            for(unsigned i=0;i<3;++i){InterlockedExchange(&diagnostic.expected_move_milli[i],metric_milli(expected[i]));InterlockedExchange(&diagnostic.observed_move_milli[i],metric_milli(observed[i]));}
+            for(unsigned i=0;i<3;++i){InterlockedExchange(&diagnostic.expected_move_micro[i],metric_micro(expected[i]));InterlockedExchange(&diagnostic.observed_move_micro[i],metric_micro(observed[i]));}
             InterlockedExchange64(&diagnostic.epoch,static_cast<LONG64>(failure.epoch));
             InterlockedExchange(&diagnostic.kind,static_cast<LONG>(failure.kind));
         }
@@ -561,23 +568,65 @@ void publish_native_commands() noexcept {
     InterlockedExchange64(&status->native_controller_held_queries,static_cast<LONG64>(native_held_queries));
     InterlockedExchange64(&status->native_controller_pressed_queries,static_cast<LONG64>(native_pressed_queries));
 }
-void trace_native_command_state(std::uint64_t now,const std::optional<NativeConsumedInput>& consumed) noexcept {
+void trace_native_command_state(std::uint64_t now,const std::optional<NativeConsumedInput>& consumed,
+                                const NativePlayerState* physical=nullptr,bool force=false,bool tail_complete=false) noexcept {
     using namespace native_commands;
     if(!scenario)return;
     const auto phase=static_cast<LONG>(scenario->report().phase);
+    const bool neutral_anchor=scenario->report().phase==ControllerScenarioPhase::movement_release&&!release_neutral_traced&&
+        consumed&&consumed->source.input_generation==generation&&consumed->input==PlayerInput{};
     const auto count=InterlockedCompareExchange(&status->native_controller_trace_count,0,0);
+    if(count<0||static_cast<std::size_t>(count)>launch::native_trace_capacity){
+        InterlockedExchange(&status->native_controller_trace_overflow,1);
+        if(!terminal(scenario->report().phase)){fault(StopReason::trace_overflow);neutralize();}return;
+    }
     if(count>0){const auto& last=status->native_controller_trace[count-1];
-        if(last.phase==phase&&last.state_code==state_code&&last.input_generation==static_cast<LONG64>(generation))return;}
-    if(count<0||static_cast<std::size_t>(count)>=launch::native_trace_capacity){
-        InterlockedExchange(&status->native_controller_trace_overflow,1);fault(StopReason::trace_overflow);neutralize();return;
+        const bool changed=last.phase!=phase||last.state_code!=state_code||last.input_generation!=static_cast<LONG64>(generation);
+        const bool periodic=(scenario->report().phase==ControllerScenarioPhase::movement_release||terminal_trace_at)&&
+            now>=physical_trace_at&&now-physical_trace_at>=50;
+        if(!changed&&!periodic&&!force&&!neutral_anchor)return;}
+    if(static_cast<std::size_t>(count)==launch::native_trace_capacity){
+        InterlockedExchange(&status->native_controller_trace_overflow,1);
+        if(!terminal(scenario->report().phase)){fault(StopReason::trace_overflow);neutralize();}return;
     }
     auto& item=status->native_controller_trace[count];
     item.phase=phase;item.state_code=state_code;item.input_generation=static_cast<LONG64>(generation);
     item.frame_sequence=consumed?static_cast<LONG64>(consumed->source.frame_sequence):0;
     item.elapsed_ms=static_cast<LONG64>(now-load_at);
+    LONG observation_flags=0;item.held_mask=0;
+    for(unsigned i=0;i<3;++i){item.position_mm[i]=0;item.resolved_milli[i]=0;}
+    if(physical&&physical->valid&&physical->ready){
+        if(!physical_trace_origin_set){physical_trace_origin=physical->position;physical_trace_origin_set=true;}
+        for(unsigned i=0;i<3;++i)item.position_mm[i]=metric_milli(physical->position[i]-physical_trace_origin[i]);
+        observation_flags=1|(tail_complete?4:0);
+        if(consumed){
+            item.resolved_milli[0]=metric_milli(consumed->input.movement.direction[0]);
+            item.resolved_milli[1]=metric_milli(consumed->input.movement.direction[1]);
+            item.resolved_milli[2]=metric_milli(consumed->input.movement.intensity);
+            item.held_mask=static_cast<LONG>(consumed->input.held);observation_flags|=2;
+        }
+    }
+    item.observation_flags=observation_flags;
     // Slots are immutable after this publication barrier. The host samples
     // the count first; short state transitions survive its slower UI polling.
-    InterlockedExchange(&status->native_controller_trace_count,count+1);
+    InterlockedExchange(&status->native_controller_trace_count,count+1);physical_trace_at=now;
+    if(neutral_anchor&&(observation_flags&launch::native_trace_consumption_valid))release_neutral_traced=true;
+}
+bool sample_terminal_position(NativePlayerState& result) noexcept {
+    using namespace native_commands;
+    try {
+        const auto actor=owned_actor.load(std::memory_order_acquire);
+        if(!on_thread()||retired.load(std::memory_order_acquire)||!actor||actor!=guest.actor||!relationships(guest,true))return false;
+        const auto position=game.position(guest.actor);
+        if(!valid_position(position)||retired.load(std::memory_order_acquire)||
+            owned_actor.load(std::memory_order_acquire)!=actor||!relationships(guest,true))return false;
+        result.valid=result.ready=true;result.position={position[0],position[1],position[2]};return true;
+    }catch(...){return false;}
+}
+bool guarded_terminal_position(NativePlayerState& result) noexcept {
+    bool okay=false;
+    __try {okay=sample_terminal_position(result);}__except(EXCEPTION_EXECUTE_HANDLER){okay=false;}
+    return okay;
 }
 void native_command_step(void* creator) {
     using namespace native_commands;
@@ -587,7 +636,20 @@ void native_command_step(void* creator) {
     if(aborted.load()){neutralize();fail_demo(Error::input_owner);publish_native_commands();return;}
     if(scenario&&terminal(scenario->report().phase)&&negative_passed){
         commands_armed=false;provider_disabled=true;trial_finished=true;
-        neutralize();publish_native_commands();return;
+        neutralize();
+        // Record a bounded physical tail after neutralization. This never
+        // resumes commands, changes the original verdict or credits input.
+        if(!terminal_trace_at)terminal_trace_at=now;
+        if(!terminal_trace_done){
+            const bool final=now>=terminal_trace_at&&now-terminal_trace_at>=1200;
+            NativePlayerState physical;
+            const bool valid=guarded_terminal_position(physical);
+            if(!valid||(terminal_trace_last&&(now<terminal_trace_last||now-terminal_trace_last>250)))terminal_trace_coherent=false;
+            terminal_trace_last=now;
+            trace_native_command_state(now,{},valid?&physical:nullptr,final,final&&valid&&terminal_trace_coherent);
+            if(final)terminal_trace_done=true;
+        }
+        publish_native_commands();return;
     }
     if(owned_actor.load()&&last_world_at&&now-last_world_at>250){
         neutralize();neutral_at=0;
@@ -636,7 +698,7 @@ void native_command_step(void* creator) {
     observation.resolved_input=consumed?consumed->input:PlayerInput{};
     observation.pose_setter_calls=demo.pose_writes;observation.direct_graph_writes=graph_writes;
     observation.other_driver_commands=locomotion_writes; // Legacy driver must stay off.
-    trace_native_command_state(now,consumed);
+    trace_native_command_state(now,consumed,&observation.guest);
     const auto output=scenario->tick(now,observation);
     if(output.neutralize)adapter.neutralize_guest();
     if(output.command){
