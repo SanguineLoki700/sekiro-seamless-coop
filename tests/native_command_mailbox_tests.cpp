@@ -1,4 +1,5 @@
 #include "skcoop/actors/native_command_mailbox.hpp"
+#include "skcoop/actors/native_input_match.hpp"
 #include <atomic>
 #include <barrier>
 #include <bit>
@@ -104,7 +105,7 @@ void actual_observed_values(){
     require(box.observe_resolver(frame.epoch,observed,true,true,true));
     require(box.observe_held(frame.epoch,CommandButton::attack,0)&&box.observe_held(frame.epoch,CommandButton::guard,0));
     const auto consumed=box.consumed();require(consumed&&consumed->input.movement==observed&&consumed->input.movement!=frame.input.movement);
-    auto wrong=observed;wrong.intensity=.3502f;
+    auto wrong=observed;wrong.intensity=.3505f;
     require(!box.observe_resolver(frame.epoch,wrong,true,true,true)&&box.failed()&&!box.consumed());
     // No combination of separate partial calls can create one complete native
     // resolver observation, even if all flags appeared somewhere in the epoch.
@@ -114,6 +115,38 @@ void actual_observed_values(){
     require(!partial.observe_resolver(neutral.epoch,{},true,false,false));
     require(!partial.observe_resolver(neutral.epoch,{},false,true,false));
     require(!partial.observe_resolver(neutral.epoch,{},false,false,true)&&!partial.consumed()&&!partial.failed());
+}
+void native_movement_numerical_bounds(){
+    for(const auto invalid:{std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN(),-1.f}){
+        require(!native_movement_matches({{0,1},.35f},{{0,1},invalid}));
+        require(!native_movement_matches({{0,1},invalid},{{0,1},.35f}));
+    }
+    const auto physical=[&](const MovementIntent& expected,const MovementIntent& observed,bool equivalent){
+        ticks=0;NativeCommandMailbox box(7,&clock_read);auto value=baseline();value.state.input.movement=expected;
+        require(valid(PlayerInput{expected,0})&&valid(PlayerInput{observed,0}));
+        require(box.offer(value)==NativeInputOffer::accepted);const auto frame=begin(box);require(box.finish_update(frame.epoch));
+        const auto result=box.observe_resolver(frame.epoch,observed,true,true,true);require(result==equivalent);
+        if(equivalent){
+            require(!box.failed()&&!box.consumed());
+            require(box.observe_held(frame.epoch,CommandButton::attack,0)&&box.observe_held(frame.epoch,CommandButton::guard,0));
+            const auto consumed=box.consumed();require(consumed&&consumed->input.movement==observed);
+            for(std::size_t i=0;i<2;++i)require(std::bit_cast<std::uint32_t>(consumed->input.movement.direction[i])==std::bit_cast<std::uint32_t>(observed.direction[i]));
+            require(std::bit_cast<std::uint32_t>(consumed->input.movement.intensity)==std::bit_cast<std::uint32_t>(observed.intensity));
+        }else {
+            require(box.failed()&&!box.consumed()&&box.failure().kind==NativeMailboxFault::movement_mismatch);
+            require(box.failure().expected.movement==expected&&box.failure().observed.movement==observed);
+        }
+    };
+    // Exact recorded numerical fixture. It tests comparison and preservation,
+    // and supplies no claim about horizontal displacement or physical walking.
+    physical({{0,1},.349999994f},{{8.742e-8f,1},.349779159f},true);
+    for(const auto intensity:{.3498f,.3502f,.35034f})physical({{0,1},.35f},{{0,1},intensity},true);
+    for(const auto intensity:{.349f,.34964f,.35036f})physical({{0,1},.35f},{{0,1},intensity},false);
+    physical({{0,1},.01f},{{0,1},.01009f},true); // Absolute tolerance floor.
+    physical({{0,1},.01f},{{0,1},.01011f},false);
+    physical({{0,1},.35f},{{.00009f,1},.3498f},true);
+    physical({{0,1},.35f},{{.00011f,1},.3498f},false); // Direction stays1e-4.
+    physical({{0,1},.35f},{{0,-1},.35f},false);
 }
 void invalid_observation_and_ingress(){
     for(unsigned defect=0;defect<6;++defect){
@@ -459,6 +492,6 @@ void atomic_completion_and_turn_proof(){
     }
 }
 }
-int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();native_previous_stick_filter();verified_native_steering_onset();atomic_completion_and_turn_proof();
+int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();native_movement_numerical_bounds();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();native_previous_stick_filter();verified_native_steering_onset();atomic_completion_and_turn_proof();
     std::cout<<"PASS portable native command mailbox, threaded ingress/update/observer epochs, actual-evidence requirements, stale/reset/pause guards and no native binding claim\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

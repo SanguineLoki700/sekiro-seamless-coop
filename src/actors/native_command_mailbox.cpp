@@ -1,16 +1,10 @@
 #include "skcoop/actors/native_command_mailbox.hpp"
+#include "skcoop/actors/native_input_match.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
 namespace skcoop::actors {
-namespace {
-bool same_movement(const MovementIntent& a,const MovementIntent& b)noexcept {
-    constexpr float tolerance=.0001f;
-    return std::abs(a.intensity-b.intensity)<=tolerance&&
-        std::abs(a.direction[0]-b.direction[0])<=tolerance&&std::abs(a.direction[1]-b.direction[1])<=tolerance;
-}
-}
 NativeCommandMailbox::NativeCommandMailbox(std::uint64_t generation,Clock clock,NativeMovementOnset onset)
     :latch_(generation),clock_(clock),movement_onset_(onset),generation_(generation){
     std::lock_guard lock(mutex_);std::uint64_t now{};
@@ -127,7 +121,7 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
     }
     const PlayerInput observed{resolved,resolved_held_};
     if(!valid(PlayerInput{resolved,0})){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
-    if(!same_movement(resolved,frame_.input.movement)){
+    if(!native_movement_matches(frame_.input.movement,resolved)){
         // The supported Pad's previous-stick filter can produce exactly zero
         // on its first moving update. Keep the actual zero uncredited; neither
         // submitted input nor a prior epoch may stand in for consumption.
@@ -153,7 +147,7 @@ bool NativeCommandMailbox::observe_turn_intent_locked(MovementIntent native_inte
     if(!native_turn_observed)return false;
     const PlayerInput observed{native_intent,resolved_held_};
     if(!valid(PlayerInput{native_intent,0})||native_intent.intensity==0){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
-    if(!same_movement(native_intent,frame_.input.movement)){fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;}
+    if(!native_movement_matches(frame_.input.movement,native_intent)){fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;}
     turn_intent_verified_=true;return true;
 }
 bool NativeCommandMailbox::observe_held(std::uint64_t epoch,CommandButton button,float duration){

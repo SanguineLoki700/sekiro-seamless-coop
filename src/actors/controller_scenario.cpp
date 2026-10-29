@@ -1,4 +1,5 @@
 #include "skcoop/actors/controller_scenario.hpp"
+#include "skcoop/actors/native_input_match.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -15,11 +16,7 @@ float distance(const std::array<float,3>& a,const std::array<float,3>& b)noexcep
 }
 bool resolved_input_matches(const PlayerInput& expected,const PlayerInput& actual)noexcept{
     if(expected.held!=actual.held)return false;
-    constexpr auto tolerance=ControllerScenario::movement_input_tolerance;
-    if(std::abs(expected.movement.intensity-actual.movement.intensity)>tolerance)return false;
-    for(std::size_t i=0;i<expected.movement.direction.size();++i)
-        if(std::abs(expected.movement.direction[i]-actual.movement.direction[i])>tolerance)return false;
-    return true;
+    return native_movement_matches(expected.movement,actual.movement);
 }
 PlayerInput input_for(Phase phase)noexcept{
     PlayerInput input;
@@ -159,8 +156,14 @@ bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScen
     phase_consumed_=true;
     const auto phase=report_.phase;
     if((phase==Phase::guard_hold||phase==Phase::guard_release)&&!o.held_state_observed){fail(Fault::invalid_consumption);return false;}
-    if(phase==Phase::moving||phase==Phase::movement_release)
-        report_.displacement=std::max(report_.displacement,distance(o.guest.position,movement_origin_));
+    if(phase==Phase::moving||phase==Phase::movement_release){
+        const auto direction=input_for(Phase::moving).movement.direction;
+        const auto progress=(o.guest.position[0]-movement_origin_[0])*direction[0]+
+                            (o.guest.position[2]-movement_origin_[2])*direction[1];
+        // Walking needs forward progress on the commanded world plane. Gravity,
+        // lateral displacement and reverse motion cannot satisfy this outcome.
+        report_.displacement=std::max(report_.displacement,progress);
+    }
     if(phase==Phase::movement_release){
         if(!stop_origin_set_){movement_stop_origin_=o.guest.position;stop_origin_set_=true;}
         stop_drift_=std::max(stop_drift_,distance(o.guest.position,movement_stop_origin_));

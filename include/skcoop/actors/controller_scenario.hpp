@@ -54,7 +54,7 @@ struct ControllerScenarioReport {
     ControllerScenarioPhase phase{ControllerScenarioPhase::waiting_ready};
     ControllerScenarioFault fault{};
     std::uint64_t commands{},consumed_commands{},observations{},guard_held_ms{};
-    float displacement{};
+    float displacement{}; // Maximum forward X/Z progress along the walk command.
     bool attack_observed{},guard_released{};
     bool action_result_unbound{}; // Latched: a later binding cannot validate prior samples.
     bool assertions_satisfied()const noexcept{return phase==ControllerScenarioPhase::complete&&fault==ControllerScenarioFault::none&&!action_result_unbound;}

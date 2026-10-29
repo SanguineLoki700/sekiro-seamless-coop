@@ -16,6 +16,7 @@ void require(bool condition,int line){if(!condition)throw std::runtime_error("Co
 // Deliberately a simulated observation source. It tests the oracle and its
 // mutations, not a native address, game controller or animation implementation.
 struct FakeRun {
+    enum class Motion {normal,gravity,orthogonal,reverse,sloped};
     ControllerScenario scenario;
     ControllerScenarioObservation observation;
     std::optional<PlayerCommand> pending;
@@ -23,6 +24,8 @@ struct FakeRun {
     std::uint64_t now{1000},attack_until{},guard_since{},releases{};
     std::array<bool,13> visited{};
     float movement_roundtrip_error{};
+    float intensity_error{};
+    Motion motion{Motion::normal};
     bool provider{true},movement{true},attack{true},guard{true},guard_break{},guard_stuck{},writeback_only{};
     explicit FakeRun(Mode mode=Mode::strict,bool output_bound=true):scenario(19,1000,mode){
         observation.guest.valid=observation.guest.ready=observation.ownership_verified=true;
@@ -46,13 +49,21 @@ struct FakeRun {
             if(command.input.movement.intensity>0){
                 observation.resolved_input.movement.direction[0]+=movement_roundtrip_error;
                 observation.resolved_input.movement.intensity+=movement_roundtrip_error;
+                observation.resolved_input.movement.intensity+=intensity_error;
             }
             const bool press=(command.input.held&button_mask(CommandButton::attack))&&!(applied.held&button_mask(CommandButton::attack));
             if(press&&attack)attack_until=now+400;
             applied=command.input;
             if(movement){
-                observation.guest.position[0]+=applied.movement.direction[0]*applied.movement.intensity*static_cast<float>(dt)*.002f;
-                observation.guest.position[2]+=applied.movement.direction[1]*applied.movement.intensity*static_cast<float>(dt)*.002f;
+                const auto amount=applied.movement.intensity*static_cast<float>(dt)*.002f;
+                if(motion==Motion::gravity)observation.guest.position[1]-=amount;
+                else if(motion==Motion::orthogonal)observation.guest.position[0]+=amount;
+                else {
+                    const float sign=motion==Motion::reverse?-1.f:1.f;
+                    observation.guest.position[0]+=sign*applied.movement.direction[0]*amount;
+                    observation.guest.position[2]+=sign*applied.movement.direction[1]*amount;
+                    if(motion==Motion::sloped)observation.guest.position[1]-=amount*.25f;
+                }
             }
             const bool held=(applied.held&button_mask(CommandButton::guard))!=0;
             if(held&&!guard_since)guard_since=now;
@@ -127,6 +138,15 @@ void independent_movement_roundtrip(){
     {FakeRun outside;outside.movement_roundtrip_error=ControllerScenario::movement_input_tolerance*2;outside.finish();outside.failed(Fault::invalid_consumption);}
     {FakeRun buttons;buttons.until(Phase::attack_press);buttons.observe();buttons.observation.resolved_input.held=0;buttons.apply();buttons.failed(Fault::invalid_consumption);}
     {FakeRun invalid;invalid.until(Phase::moving);invalid.observe();invalid.observation.resolved_input.movement.intensity=std::numeric_limits<float>::quiet_NaN();invalid.apply();invalid.failed(Fault::invalid_consumption);}
+    {FakeRun native_precision;native_precision.intensity_error=.3497791588306427f-.35f;native_precision.finish();CHECK(native_precision.scenario.report().assertions_satisfied());}
+    {FakeRun wrong_intensity;wrong_intensity.intensity_error=-.001f;wrong_intensity.finish();wrong_intensity.failed(Fault::invalid_consumption);}
+    for(const auto motion:{FakeRun::Motion::gravity,FakeRun::Motion::orthogonal,FakeRun::Motion::reverse}){
+        FakeRun wrong_progress;wrong_progress.motion=motion;wrong_progress.finish();wrong_progress.failed(Fault::movement_missing);
+        CHECK(wrong_progress.scenario.report().displacement==0);
+    }
+    {FakeRun slope;slope.motion=FakeRun::Motion::sloped;slope.finish();CHECK(slope.scenario.report().assertions_satisfied());}
+    {FakeRun vertical_bound;vertical_bound.until(Phase::moving);vertical_bound.observe();vertical_bound.observation.guest.position[1]+=4.1f;
+     vertical_bound.apply();vertical_bound.failed(Fault::movement_exceeded);}
 }
 void required_outcomes(){
     {FakeRun run;run.provider=false;run.finish();run.failed(Fault::consumer_timeout);}
