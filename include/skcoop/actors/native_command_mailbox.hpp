@@ -5,8 +5,11 @@
 namespace skcoop::actors {
 enum class NativeMailboxFault {
     none,invalid_clock,clock_regressed,epoch_exhausted,overlapping_update,
+    // Historical values 7/8 do not identify which movement stage failed.
     latch_failure,invalid_source,invalid_movement,movement_mismatch,
-    invalid_held,held_mismatch,abandoned_update
+    invalid_held,held_mismatch,abandoned_update,
+    invalid_turn_intent=12,turn_intent_mismatch=13,
+    invalid_resolver_movement=14,resolver_movement_mismatch=15
 };
 struct NativeMailboxFailure {
     NativeMailboxFault kind{};

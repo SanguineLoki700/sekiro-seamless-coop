@@ -16,7 +16,7 @@ O lançador, assistente, instalação de teste, perfis `.co2`, backups, DLL, ide
 
 O progresso permanece em **10%**. Código, ferramentas, testes simulados ou um resultado inconclusivo não concedem pontos.
 
-A rodada mais recente consumiu comandos móveis e registrou 0,666 m de avanço na direção comandada, com uma criação e apenas o posicionamento inicial. A sequência parou na verificação da parada, antes de ataque e defesa. Esse resultado parcial não conclui o controlador nem altera os pontos.
+A oitava rodada consumiu comandos móveis e registrou 0,666 m de avanço na direção comandada, com uma criação e apenas o posicionamento inicial. A sequência parou na verificação da parada, antes de ataque e defesa. A nona interrompeu antes da parada, por diferença de intensidade entre 0,35 e 0,349454; o código histórico não distingue em qual estágio ela surgiu. Esses resultados parciais não concluem o controlador nem alteram os pontos.
 
 ## Contratos e controle
 
@@ -39,6 +39,17 @@ O observador exige chamadas nativas originais que escrevem os parâmetros do gra
 A direção é observada no getter chamado pelo cálculo nativo de movimento, imediatamente antes da instrução que a lê. O diagnóstico conserva o primeiro comando de caminhada em três pontos: após o Pad, na leitura do consumidor e após o resolver. Os estágios têm marcadores imutáveis e só recebem a atualização comprovada pelos checks anteriores e posteriores à leitura.
 
 O protocolo entre lançador e DLL passa a **14**, exigindo os binários correspondentes. O recibo também conserva posições relativas e consumo confirmado durante a liberação do movimento, em intervalos de pelo menos 50 ms, incluindo o primeiro neutro confirmado, e uma cauda física de 1,2 segundo após a interrupção. A cauda mantém controles neutros, não muda o resultado e não transforma entrada solicitada em prova de consumo. Posição ou consumo indisponíveis aparecem como desconhecidos; o marcador final exige posição válida, propriedade ainda publicada e coleta sem lacunas acima de 250 ms. O índice do histórico é publicado depois de preencher cada entrada. Diferenças de input na primeira falha passam a usar resolução de um milionésimo.
+
+Novas falhas de movimento distinguem o ponto de observação no campo `mailbox_failure.kind`, sem mudar tolerância ou requisitos de consumo:
+
+| Código | Origem e condição |
+|---|---|
+| 12 | Intenção nativa de giro inválida (`invalid_turn_intent`). |
+| 13 | Intenção nativa de giro diferente do comando (`turn_intent_mismatch`). |
+| 14 | Movimento lido pelo resolver inválido (`invalid_resolver_movement`). |
+| 15 | Movimento lido pelo resolver diferente do comando (`resolver_movement_mismatch`). |
+
+Os códigos históricos 7 e 8 continuam reservados aos registros antigos: indicavam valor inválido ou divergente sem distinguir essas duas origens. Um registro antigo com código 8 permanece de origem desconhecida; os novos códigos não o reclassificam. O diagnóstico conserva o epoch e os valores observados da primeira falha, inclusive quando a intenção de giro é validada durante a publicação atômica da conclusão do Pad.
 
 A quinta rodada confirmou eixos fornecidos não nulos, mas vetor zero já ao sair do Pad. O filtro depende do stick anterior. A sexta passou desse zero e encontrou uma diferença entre a intenção de direção e o movimento produzido enquanto o corpo vira. Duas sequências privadas automáticas, com os dois eixos e ambos os sentidos, comprovaram intenção correta e chamada nativa de giro; o vetor físico se alinhou duas atualizações depois. A conversão dos eixos foi preservada.
 
@@ -64,5 +75,7 @@ Há duas modalidades explícitas do verificador:
 - **Diagnóstico com resultado desconhecido:** permite coletar a sequência completa e os códigos de estado reais, conservando as condições de entrada, propriedade, física e tempo. Termina **inconclusivo**, nunca aprovado. Um binding descoberto depois não valida retroativamente a coleta.
 
 O candidato usa a segunda modalidade porque os códigos que comprovam ataque e defesa efetivos ainda não estão classificados. Nível de botão, tempo de controle mantido ou estado escrito pelo provedor não são usados para inventar esse resultado. O registro contém transições de estado por atualização em uma lista limitada e publicada atomicamente, preservando mudanças curtas entre leituras mais lentas da interface. Ausência, overflow, erro ou timeout impede aceitação.
+
+Depois que um neutro da fase atual estabelece a origem da parada, toda amostra física fresca participa da deriva máxima, inclusive durante uma lacuna de observação do consumidor. Uma excursão seguida de retorno não desaparece do registro. Essa correção conserva o limite de 0,15 m, a duração de 500 ms, a distância tridimensional e a exigência de consumo nativo para estabelecer a origem; não resolve nem aprova a parada observada no jogo.
 
 Veja os [resultados e limites da pesquisa](validation/native-controller-research-2026-10-28.md). O pacote público anterior não foi substituído por esta implementação.

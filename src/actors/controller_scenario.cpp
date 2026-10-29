@@ -144,6 +144,11 @@ bool ControllerScenario::check_invariants(std::uint64_t now,const ControllerScen
 bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScenarioObservation& o,bool fresh)noexcept{
     if(!fresh){guard_consecutive_=false;return true;}
     ++report_.observations;
+    // Once native neutral consumption establishes the stop anchor, every
+    // fresh physical sample belongs to the envelope. A missing consumer
+    // observation cannot hide an excursion that later returns to the anchor.
+    if(report_.phase==Phase::movement_release&&stop_origin_set_)
+        stop_drift_=std::max(stop_drift_,distance(o.guest.position,movement_stop_origin_));
     if(!o.consumer_observed){guard_consecutive_=false;return true;}
     const auto sequence=o.guest.consumed_frame_sequence;
     if(o.guest.consumed_input_generation!=generation_||!sequence||sequence>last_issued_||sequence<last_consumed_||!valid(o.resolved_input)){
@@ -166,7 +171,6 @@ bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScen
     }
     if(phase==Phase::movement_release){
         if(!stop_origin_set_){movement_stop_origin_=o.guest.position;stop_origin_set_=true;}
-        stop_drift_=std::max(stop_drift_,distance(o.guest.position,movement_stop_origin_));
     }
     // Input consumption and physical motion above remain mandatory. Once any
     // classification sample was unbound, this diagnostic cannot retrospectively

@@ -10,6 +10,13 @@
 #include <string>
 #include <thread>
 using namespace skcoop::actors;
+static_assert(static_cast<int>(NativeMailboxFault::invalid_movement)==7&&
+    static_cast<int>(NativeMailboxFault::movement_mismatch)==8&&
+    static_cast<int>(NativeMailboxFault::abandoned_update)==11);
+static_assert(static_cast<int>(NativeMailboxFault::invalid_turn_intent)==12&&
+    static_cast<int>(NativeMailboxFault::turn_intent_mismatch)==13&&
+    static_cast<int>(NativeMailboxFault::invalid_resolver_movement)==14&&
+    static_cast<int>(NativeMailboxFault::resolver_movement_mismatch)==15);
 namespace {
 void check(bool yes,int line){if(!yes)throw std::runtime_error("Native command mailbox invariant at line "+std::to_string(line));}
 #define require(value) check((value),__LINE__)
@@ -133,7 +140,7 @@ void native_movement_numerical_bounds(){
             for(std::size_t i=0;i<2;++i)require(std::bit_cast<std::uint32_t>(consumed->input.movement.direction[i])==std::bit_cast<std::uint32_t>(observed.direction[i]));
             require(std::bit_cast<std::uint32_t>(consumed->input.movement.intensity)==std::bit_cast<std::uint32_t>(observed.intensity));
         }else {
-            require(box.failed()&&!box.consumed()&&box.failure().kind==NativeMailboxFault::movement_mismatch);
+            require(box.failed()&&!box.consumed()&&box.failure().kind==NativeMailboxFault::resolver_movement_mismatch);
             require(box.failure().expected.movement==expected&&box.failure().observed.movement==observed);
         }
     };
@@ -218,7 +225,7 @@ void failure_diagnostics(){
     require(box.offer(requested)==NativeInputOffer::accepted);const auto frame=begin(box);require(box.finish_update(frame.epoch));
     const MovementIntent actual{{0,-1},.5f};
     require(!box.observe_resolver(frame.epoch,actual,true,true,true));const auto first=box.failure();
-    require(first.kind==NativeMailboxFault::movement_mismatch&&first.latch_fault==NativeInputFault::none&&first.epoch==frame.epoch);
+    require(first.kind==NativeMailboxFault::resolver_movement_mismatch&&first.latch_fault==NativeInputFault::none&&first.epoch==frame.epoch);
     require(first.expected==frame.input&&first.observed.movement==actual&&first.observed.held==0);
     // Later calls, a clock failure during suspend, and even an explicitly new
     // lifetime cannot overwrite the mailbox object's first diagnostic report.
@@ -235,7 +242,7 @@ void failure_diagnostics(){
     const auto invalid_frame=begin(invalid_move);require(invalid_move.finish_update(invalid_frame.epoch));
     const auto nan=std::numeric_limits<float>::quiet_NaN();const MovementIntent bad{{},nan};
     require(!invalid_move.observe_resolver(invalid_frame.epoch,bad,true,true,true));
-    const auto invalid=invalid_move.failure();require(invalid.kind==NativeMailboxFault::invalid_movement&&invalid.epoch==invalid_frame.epoch);
+    const auto invalid=invalid_move.failure();require(invalid.kind==NativeMailboxFault::invalid_resolver_movement&&invalid.epoch==invalid_frame.epoch);
     require(std::bit_cast<std::uint32_t>(invalid.observed.movement.intensity)==std::bit_cast<std::uint32_t>(nan)&&invalid.expected==invalid_frame.input);
 
     NativeCommandMailbox held(7,&clock_read);require(held.offer(baseline())==NativeInputOffer::accepted);const auto held_frame=begin(held);require(held.finish_update(held_frame.epoch));
@@ -260,6 +267,28 @@ void failure_diagnostics(){
     ticks=10;NativeCommandMailbox clock(7,&clock_read);require(clock.offer(baseline())==NativeInputOffer::accepted);const auto clock_frame=begin(clock);
     require(clock.finish_update(clock_frame.epoch));ticks=9;require(!clock.observe_held(clock_frame.epoch,CommandButton::attack,0));
     require(clock.failure().kind==NativeMailboxFault::clock_regressed&&clock.failure().epoch==clock_frame.epoch);
+}
+void failure_origin_diagnostics(){
+    // The same numerical pair must identify its actual observation stage.
+    // This synthetic fixture does not attribute an earlier native run's kind8.
+    const MovementIntent expected{{0,1},.35f},observed{{0,1},.349454f};
+    for(unsigned origin=0;origin<3;++origin){
+        ticks=0;NativeCommandMailbox box(7,&clock_read);auto value=baseline();value.state.input.movement=expected;
+        require(box.offer(value)==NativeInputOffer::accepted);const auto frame=begin(box);
+        if(origin==2)require(!box.finish_update(frame.epoch,NativeTurnIntent{observed,true}));
+        else {
+            require(box.finish_update(frame.epoch));
+            if(origin==0)require(!box.observe_resolver(frame.epoch,observed,true,true,true));
+            else require(!box.observe_turn_intent(frame.epoch,observed,true));
+        }
+        const auto failure=box.failure();
+        require(box.failed()&&!box.consumed()&&failure.epoch==frame.epoch&&failure.expected==frame.input);
+        require(failure.kind==(origin==0?NativeMailboxFault::resolver_movement_mismatch:NativeMailboxFault::turn_intent_mismatch));
+        require(failure.observed.movement==observed&&
+            std::bit_cast<std::uint32_t>(failure.observed.movement.intensity)==std::bit_cast<std::uint32_t>(observed.intensity));
+        require(!box.observe_resolver(frame.epoch,expected,true,true,true)&&!box.observe_turn_intent(frame.epoch,expected,true));
+        require(box.failure().kind==failure.kind&&box.failure().observed==failure.observed);
+    }
 }
 void native_previous_stick_filter(){
     const MovementIntent movement{{0,1},.35f};
@@ -367,7 +396,7 @@ void verified_native_steering_onset(){
         }
         frame=next(persistent,4);require(persistent.observe_turn_intent(frame.epoch,movement,true));
         require(!persistent.observe_resolver(frame.epoch,zero?MovementIntent{}:opposite,true,true,true)&&persistent.failed());
-        require(persistent.failure().kind==NativeMailboxFault::movement_mismatch&&!persistent.consumed());
+        require(persistent.failure().kind==NativeMailboxFault::resolver_movement_mismatch&&!persistent.consumed());
     }
     // Missing, false and previous-epoch steering cannot authorize a divergent
     // physical observation. A wrong/invalid nonzero intent fails immediately.
@@ -377,9 +406,9 @@ void verified_native_steering_onset(){
         require(!proof.observe_resolver(prior.epoch,{},true,true,true));frame=next(proof,2);
         if(defect==1)require(!proof.observe_turn_intent(frame.epoch,movement,false));
         if(defect==2)require(!proof.observe_turn_intent(prior.epoch,movement,true));
-        if(defect==3){require(!proof.observe_turn_intent(frame.epoch,opposite,true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::movement_mismatch);continue;}
-        if(defect==4){require(!proof.observe_turn_intent(frame.epoch,{{},std::numeric_limits<float>::quiet_NaN()},true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::invalid_movement);continue;}
-        if(defect==5){require(!proof.observe_turn_intent(frame.epoch,{},true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::invalid_movement);continue;}
+        if(defect==3){require(!proof.observe_turn_intent(frame.epoch,opposite,true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::turn_intent_mismatch);continue;}
+        if(defect==4){require(!proof.observe_turn_intent(frame.epoch,{{},std::numeric_limits<float>::quiet_NaN()},true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::invalid_turn_intent);continue;}
+        if(defect==5){require(!proof.observe_turn_intent(frame.epoch,{},true)&&proof.failed());require(proof.failure().kind==NativeMailboxFault::invalid_turn_intent);continue;}
         if(defect==6){require(proof.observe_turn_intent(frame.epoch,movement,true));require(!proof.observe_turn_intent(frame.epoch,movement,false));}
         require(!proof.observe_resolver(frame.epoch,opposite,true,true,true)&&proof.failed()&&!proof.consumed());
     }
@@ -464,7 +493,7 @@ void atomic_completion_and_turn_proof(){
         }else {
             require(!completed&&box.failed()&&box.current_epoch()==0&&!box.consumed());
             require(!box.observe_resolver(frame.epoch,movement,true,true,true));
-            require(box.failure().kind==(defect==0?NativeMailboxFault::movement_mismatch:NativeMailboxFault::invalid_movement));
+            require(box.failure().kind==(defect==0?NativeMailboxFault::turn_intent_mismatch:NativeMailboxFault::invalid_turn_intent));
         }
     }
     // Observer threads may race completion, but can never see a completed
@@ -492,6 +521,6 @@ void atomic_completion_and_turn_proof(){
     }
 }
 }
-int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();native_movement_numerical_bounds();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();native_previous_stick_filter();verified_native_steering_onset();atomic_completion_and_turn_proof();
+int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();native_movement_numerical_bounds();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();failure_origin_diagnostics();native_previous_stick_filter();verified_native_steering_onset();atomic_completion_and_turn_proof();
     std::cout<<"PASS portable native command mailbox, threaded ingress/update/observer epochs, actual-evidence requirements, stale/reset/pause guards and no native binding claim\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

@@ -120,7 +120,7 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
         resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
     }
     const PlayerInput observed{resolved,resolved_held_};
-    if(!valid(PlayerInput{resolved,0})){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
+    if(!valid(PlayerInput{resolved,0})){fail_locked(NativeMailboxFault::invalid_resolver_movement,observed);return false;}
     if(!native_movement_matches(frame_.input.movement,resolved)){
         // The supported Pad's previous-stick filter can produce exactly zero
         // on its first moving update. Keep the actual zero uncredited; neither
@@ -132,7 +132,7 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
         if(first_zero||verified_onset){
             resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
         }
-        fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;
+        fail_locked(NativeMailboxFault::resolver_movement_mismatch,observed);return false;
     }
     if(movement_onset_==NativeMovementOnset::defer_verified_steering)steering_window_open_=false;
     resolver_gate_=resolver_speed_=resolver_angle_=true;resolved_movement_=resolved;resolver_at_=now;return true;
@@ -146,8 +146,8 @@ bool NativeCommandMailbox::observe_turn_intent_locked(MovementIntent native_inte
     turn_intent_verified_=false;
     if(!native_turn_observed)return false;
     const PlayerInput observed{native_intent,resolved_held_};
-    if(!valid(PlayerInput{native_intent,0})||native_intent.intensity==0){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
-    if(!native_movement_matches(frame_.input.movement,native_intent)){fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;}
+    if(!valid(PlayerInput{native_intent,0})||native_intent.intensity==0){fail_locked(NativeMailboxFault::invalid_turn_intent,observed);return false;}
+    if(!native_movement_matches(frame_.input.movement,native_intent)){fail_locked(NativeMailboxFault::turn_intent_mismatch,observed);return false;}
     turn_intent_verified_=true;return true;
 }
 bool NativeCommandMailbox::observe_held(std::uint64_t epoch,CommandButton button,float duration){

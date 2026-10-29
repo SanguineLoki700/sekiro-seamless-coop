@@ -171,6 +171,14 @@ void required_outcomes(){
      // Establish a neutral sample, then reveal continued uncommanded motion.
      if(!terminal(run.scenario.report().phase)){run.observe();run.observation.guest.position[2]+=.3f;run.apply();run.finish();}
      run.failed(Fault::movement_not_released);}
+    {FakeRun run;run.until(Phase::movement_release);run.tick();
+     // The first valid neutral consumer establishes the anchor. Physical
+     // samples remain authoritative during a brief consumer-observation gap.
+     const auto anchor=run.observation.guest.position;
+     run.observe();run.observation.consumer_observed=false;run.observation.guest.position[2]+=.3f;run.apply();
+     run.observe();run.observation.consumer_observed=false;run.observation.guest.position=anchor;run.apply();
+     run.tick();CHECK(run.observation.consumer_observed&&!terminal(run.scenario.report().phase));
+     run.finish();run.failed(Fault::movement_not_released);}
 }
 void invariant_mutations(){
     for(unsigned mutation=0;mutation<5;++mutation){FakeRun run;run.observe();
