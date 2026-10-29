@@ -29,7 +29,7 @@ void NativeCommandMailbox::invalidate_locked(){
     association_=ready_=false;
     // Invalidating a source association does not run the native Pad. Only an
     // actual neutral begin_update may rearm its previous-stick onset allowance.
-    onset_frame_=false;
+    onset_frame_=turn_intent_verified_=false;
     resolver_gate_=resolver_speed_=resolver_angle_=attack_seen_=guard_seen_=false;
     resolved_movement_={};resolved_held_=0;
     resolver_at_=attack_at_=guard_at_=completed_at_=0;
@@ -76,23 +76,35 @@ NativeInputFrame NativeCommandMailbox::begin_update(){
     // original must be finished/abandoned normally, but it has no source claim.
     frame_.accepted=true;frame_.source=latch_.source_identity();
     const bool moving=frame_.input.movement.intensity>0;
-    onset_frame_=movement_onset_==NativeMovementOnset::defer_first_zero&&moving&&!previous_moving_;
+    const bool starting=moving&&!previous_moving_;
+    onset_frame_=(movement_onset_==NativeMovementOnset::defer_first_zero||
+        movement_onset_==NativeMovementOnset::defer_verified_steering)&&starting;
+    if(movement_onset_==NativeMovementOnset::defer_verified_steering){
+        if(!moving){steering_window_open_=false;steering_updates_=0;}
+        else if(starting){steering_window_open_=true;steering_updates_=1;steering_onset_at_=now;}
+        else if(steering_updates_<4)++steering_updates_;
+    }
     previous_moving_=moving;
     if(frame_.source&&(frame_.source->input_generation!=generation_||!frame_.source->frame_sequence)){
         fail_locked(NativeMailboxFault::invalid_source);return {};
     }
     issued_at_=now;completed_at_=0;flight_epoch_=frame_.epoch;in_flight_=association_=true;ready_=false;
     resolver_gate_=resolver_speed_=resolver_angle_=attack_seen_=guard_seen_=false;
+    turn_intent_verified_=false;
     resolved_movement_={};resolved_held_=0;
     resolver_at_=attack_at_=guard_at_=0;return frame_;
 }
-bool NativeCommandMailbox::finish_update(std::uint64_t epoch){
+bool NativeCommandMailbox::finish_update(std::uint64_t epoch,std::optional<NativeTurnIntent> turn_intent){
     std::lock_guard lock(mutex_);
     if(!epoch||!in_flight_||epoch!=flight_epoch_)return false;
     in_flight_=false;flight_epoch_=0;
     if(failed_||!association_||epoch!=frame_.epoch)return false;
     std::uint64_t now{};if(!now_locked(now))return false;
     if(!fresh_locked(now)){association_=ready_=false;return false;}
+    if(turn_intent){
+        observe_turn_intent_locked(turn_intent->movement,turn_intent->native_turn_observed);
+        if(failed_)return false;
+    }
     completed_at_=now;ready_=true;return true;
 }
 void NativeCommandMailbox::abandon_update(std::uint64_t epoch){
@@ -119,12 +131,30 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
         // The supported Pad's previous-stick filter can produce exactly zero
         // on its first moving update. Keep the actual zero uncredited; neither
         // submitted input nor a prior epoch may stand in for consumption.
-        if(onset_frame_&&resolved==MovementIntent{}){
+        const bool steering_policy=movement_onset_==NativeMovementOnset::defer_verified_steering;
+        const bool first_zero=onset_frame_&&resolved==MovementIntent{}&&(!steering_policy||steering_window_open_);
+        const bool verified_onset=steering_policy&&steering_window_open_&&steering_updates_>=1&&steering_updates_<=3&&
+            now>=steering_onset_at_&&now-steering_onset_at_<=observation_expiry_ms&&turn_intent_verified_;
+        if(first_zero||verified_onset){
             resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
         }
         fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;
     }
+    if(movement_onset_==NativeMovementOnset::defer_verified_steering)steering_window_open_=false;
     resolver_gate_=resolver_speed_=resolver_angle_=true;resolved_movement_=resolved;resolver_at_=now;return true;
+}
+bool NativeCommandMailbox::observe_turn_intent(std::uint64_t epoch,MovementIntent native_intent,bool native_turn_observed){
+    std::lock_guard lock(mutex_);if(!matches_locked(epoch))return false;
+    std::uint64_t now{};if(!now_locked(now)||!fresh_locked(now))return false;
+    return observe_turn_intent_locked(native_intent,native_turn_observed);
+}
+bool NativeCommandMailbox::observe_turn_intent_locked(MovementIntent native_intent,bool native_turn_observed){
+    turn_intent_verified_=false;
+    if(!native_turn_observed)return false;
+    const PlayerInput observed{native_intent,resolved_held_};
+    if(!valid(PlayerInput{native_intent,0})||native_intent.intensity==0){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
+    if(!same_movement(native_intent,frame_.input.movement)){fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;}
+    turn_intent_verified_=true;return true;
 }
 bool NativeCommandMailbox::observe_held(std::uint64_t epoch,CommandButton button,float duration){
     std::lock_guard lock(mutex_);if(!matches_locked(epoch))return false;

@@ -7,13 +7,14 @@ constexpr ButtonMask supported=button_mask(CommandButton::attack)|button_mask(Co
 struct Binding {Token world{},primary{},registry{},actor{},controller{},component{},behavior{},requests{},root{};
     std::uint32_t actor_handle{},primary_handle{};};
 struct PadScope {
-    bool guest{},usable{},axes_ready{},completion_called{};
+    bool guest{},usable{},axes_ready{},completion_called{},turn_seen{};
     Token controller{};
     int logical{-1},raw_code{-1};
     PlayerInput supplied,captured;
     NativeStickAxes axes;
     NativeInputFrame frame;
     unsigned axis_mask{};float basis_yaw{};
+    Vector turn_target{};
 };
 thread_local PadScope* pad_scope{};
 struct ParameterScope {Token actor{},character{},overrides{};std::uint64_t epoch{};
@@ -37,7 +38,7 @@ bool negative_passed{};
 std::optional<ControllerScenario> scenario;
 PlayerCommandReceiver receiver{supported};
 std::uint64_t native_milliseconds() noexcept {return GetTickCount64();}
-NativeCommandMailbox mailbox{1,&native_milliseconds,NativeMovementOnset::defer_first_zero};
+NativeCommandMailbox mailbox{1,&native_milliseconds,NativeMovementOnset::defer_verified_steering};
 CommandScope command_scope;
 std::uint64_t generation{1},load_at{},neutral_at{},last_world_at{},negative_at{};
 std::atomic<std::uint64_t> native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{},primary_frames{};
@@ -56,6 +57,7 @@ using IsAdditional=std::uint8_t (*)(void*);
 using Held=float (*)(void*,int);
 using Pressed=std::uint8_t (*)(void*,int,int);
 using GetController=void* (*)(void*);
+using TurnDelta=void* (*)(void*,const void*,const void*);
 ControllerUpdate real_pad{};
 RawButton real_button{};
 LogicalMap real_map{};
@@ -67,6 +69,7 @@ Held real_held{};
 Pressed real_pressed{};
 WriteGraphFloat real_graph_set{};
 GetController real_get_controller{};
+TurnDelta real_turn_delta{};
 
 enum class StopReason:LONG {none,internal,ownership,wrong_thread,invalid_delta,source_axes,
     source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow,
@@ -182,6 +185,32 @@ bool guarded_observe(NativePlayerState& result)noexcept {
     return okay;
 }
 
+bool read_turn_target(Vector& value,const void* target) noexcept {
+    try {value=read<Vector>(reinterpret_cast<Token>(target));return valid_position(value);}
+    catch(...){return false;}
+}
+bool guarded_read_turn_target(Vector& value,const void* target) noexcept {
+    bool okay=false;
+    __try {okay=read_turn_target(value,target);}__except(EXCEPTION_EXECUTE_HANDLER){okay=false;}
+    return okay;
+}
+void* turn_delta(void* output,const void* target,const void* current) {
+    auto* scope=pad_scope;
+    const bool selected=scope&&scope->guest&&scope->usable&&!retired.load()&&!aborted.load()&&
+        scope->controller==owned_controller.load(std::memory_order_acquire)&&
+        reinterpret_cast<Token>(_ReturnAddress())==base+0x7f1403;
+    Vector observed{};bool sampled=false;
+    if(selected){regions.begin();sampled=guarded_read_turn_target(observed,target);regions.end();}
+    // Observe an original engine call computing the guest's turn request. The
+    // adapter neither issues this call nor changes its arguments/result.
+    auto* result=real_turn_delta(output,target,current);
+    if(selected){
+        if(!sampled||result!=output||scope!=pad_scope||scope->turn_seen)fault();
+        else {scope->turn_target=observed;scope->turn_seen=true;}
+    }
+    return result;
+}
+
 int map_button(int logical) {
     const auto result=real_map(logical);
     if(pad_scope){pad_scope->logical=logical;pad_scope->raw_code=result;}
@@ -269,7 +298,27 @@ void pad_after(PadScope& scope) noexcept {
         if(!scope.usable)return;
         if(scope.guest){
             if(scope.frame.accepted){
-                const bool completed=mailbox.finish_update(scope.frame.epoch);scope.completion_called=true;
+                std::optional<NativeTurnIntent> turn_proof;
+                if(scope.turn_seen&&scope.frame.input.movement.intensity>0){
+                    if(!relationships(guest,true))throw InputFailure{Error::input_owner};
+                    const auto desired=read<Vector>(scope.controller+0xc0);
+                    if(!valid_position(desired)||std::abs(desired[1])>.0001f||std::abs(desired[3])>.0001f)
+                        throw InputFailure{Error::input_value};
+                    const auto intensity=std::hypot(desired[0],desired[2]);
+                    if(intensity>1.001f)throw InputFailure{Error::input_value};
+                    if(intensity>.00001f){
+                        const MovementIntent intent{{desired[0]/intensity,desired[2]/intensity},std::min(intensity,1.f)};
+                        const auto yaw=std::atan2(intent.direction[0],intent.direction[1])+std::numbers::pi_v<float>;
+                        const bool turn_matches=std::abs(scope.turn_target[0])<=.0001f&&
+                            std::abs(scope.turn_target[2])<=.0001f&&std::abs(scope.turn_target[3])<=.0001f&&
+                            std::abs(std::remainder(scope.turn_target[1]-yaw,2*std::numbers::pi_v<float>))<=.0001f;
+                        turn_proof=NativeTurnIntent{intent,turn_matches};
+                    }
+                }
+                // Collect native values outside the mailbox lock; publish the
+                // completed epoch and its turn proof atomically. A behavior
+                // worker must never see a ready epoch missing pending proof.
+                const bool completed=mailbox.finish_update(scope.frame.epoch,turn_proof);scope.completion_called=true;
                 if(completed&&scope.frame.input.movement.intensity>0&&consumer_epoch()==scope.frame.epoch){
                     const auto actual=read<Vector>(scope.controller+0x10);
                     if(consumer_epoch()==scope.frame.epoch){std::lock_guard lock(primary_lock);
@@ -647,6 +696,7 @@ bool install_native_command_hooks(bool detach=false) noexcept {
         real_held=reinterpret_cast<Held>(base+0xb2b380);real_pressed=reinterpret_cast<Pressed>(base+0xb2b6d0);
         real_graph_set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
         real_get_controller=reinterpret_cast<GetController>(base+0x9efea0);
+        real_turn_delta=reinterpret_cast<TurnDelta>(base+0x7eef80);
     }
     bool begun=false;LONG result=ERROR_INVALID_FUNCTION;
     if(okay){result=DetourTransactionBegin();begun=result==NO_ERROR;}
@@ -666,6 +716,7 @@ bool install_native_command_hooks(bool detach=false) noexcept {
         change(real_held,&held);change(real_pressed,&pressed);
         change(real_graph_set,&observe_graph_set);
         change(real_get_controller,&controller_for_actor);
+        change(real_turn_delta,&turn_delta);
         if(result==NO_ERROR)result=DetourTransactionCommit();else DetourTransactionAbort();
     }
     for(std::size_t i=0;i<count;++i)CloseHandle(threads[i]);

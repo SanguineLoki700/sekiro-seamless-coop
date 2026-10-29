@@ -23,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <numbers>
 #include <limits>
 #include <cstring>
 #include <stdexcept>

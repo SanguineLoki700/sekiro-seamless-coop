@@ -22,6 +22,10 @@ struct NativeInputFrame {
     std::optional<NativeInputSource> source;
     bool accepted{}; // A valid original-update token, including neutral quarantine.
 };
+struct NativeTurnIntent {
+    MovementIntent movement;
+    bool native_turn_observed{};
+};
 struct NativeConsumedInput {
     NativeInputSource source;
     std::uint64_t epoch{};
@@ -34,7 +38,13 @@ enum class NativeMovementOnset {
     // Exact native binding only: its previous-stick filter may suppress the
     // first neutral-to-moving update. That zero result earns no consumption;
     // the next native update must match normally. Not a time-based grace.
-    defer_first_zero
+    defer_first_zero,
+    // Exact native binding only: with a matching native steering observation
+    // in the same completed epoch, a valid divergent physical direction may
+    // remain uncredited for the first three moving updates and at most100ms.
+    // Correct physical movement is still required for consumption. Association
+    // changes never rearm this window; only a real neutral begin_update does.
+    defer_verified_steering
 };
 // Serializes receiver ingress and one actor's native update/observation threads.
 // Engine calls must execute outside these methods. The supplied clock is a
@@ -51,7 +61,9 @@ public:
     NativeInputFrame begin_update();
     // Matching completion retires the original Pad slot. This is not by itself
     // consumption evidence. An invalidated or expired completion returns false.
-    bool finish_update(std::uint64_t epoch);
+    // A verified native turn, when supplied, is validated and published under
+    // the same mutex before completion becomes visible to observer threads.
+    bool finish_update(std::uint64_t epoch,std::optional<NativeTurnIntent> turn_intent={});
     void abandon_update(std::uint64_t epoch);
     std::uint64_t current_epoch();
     // Only a completed epoch accepts observations. All flags must describe the
@@ -59,6 +71,10 @@ public:
     // are not requested stage values and partial calls cannot be combined.
     bool observe_resolver(std::uint64_t epoch,MovementIntent resolved,
                           bool gate,bool speedWrite,bool angleWrite);
+    // Native steering is corroboration for a bounded onset deferral, never
+    // physical consumption evidence. An unobserved turn supplies no proof;
+    // an observed turn requires valid nonzero input matching this epoch.
+    bool observe_turn_intent(std::uint64_t epoch,MovementIntent native_intent,bool native_turn_observed);
     bool observe_held(std::uint64_t epoch,CommandButton,float duration);
     std::optional<NativeConsumedInput> consumed();
     void suspend();
@@ -79,6 +95,8 @@ private:
     NativeMailboxFailure failure_;
     bool clock_seen_{},failed_{},in_flight_{},association_{},ready_{};
     bool previous_moving_{},onset_frame_{};
+    bool steering_window_open_{},turn_intent_verified_{};
+    std::uint64_t steering_onset_at_{},steering_updates_{};
     bool resolver_gate_{},resolver_speed_{},resolver_angle_{},attack_seen_{},guard_seen_{};
     MovementIntent resolved_movement_;
     ButtonMask resolved_held_{};
@@ -90,5 +108,6 @@ private:
     void fail_locked(NativeMailboxFault,std::optional<PlayerInput> observed={},CommandButton button={},float held_duration=0);
     bool matches_locked(std::uint64_t)const;
     bool fresh_locked(std::uint64_t)const;
+    bool observe_turn_intent_locked(MovementIntent,bool);
 };
 }
