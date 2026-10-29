@@ -228,7 +228,69 @@ void failure_diagnostics(){
     require(clock.finish_update(clock_frame.epoch));ticks=9;require(!clock.observe_held(clock_frame.epoch,CommandButton::attack,0));
     require(clock.failure().kind==NativeMailboxFault::clock_regressed&&clock.failure().epoch==clock_frame.epoch);
 }
+void native_previous_stick_filter(){
+    const MovementIntent movement{{0,1},.35f};
+    const auto moving=[&](std::uint64_t frame){auto value=command(7,frame);value.state.input.movement=movement;return value;};
+    ticks=0;NativeCommandMailbox strict(7,&clock_read);
+    require(strict.offer(baseline())==NativeInputOffer::accepted);
+    auto frame=begin(strict);require(strict.finish_update(frame.epoch)&&evidence(strict,frame));
+    ticks=1;require(strict.offer(moving(2))==NativeInputOffer::accepted);frame=begin(strict);require(strict.finish_update(frame.epoch));
+    require(!strict.observe_resolver(frame.epoch,{},true,true,true)&&strict.failed());
+
+    ticks=0;NativeCommandMailbox filtered(7,&clock_read,NativeMovementOnset::defer_first_zero);
+    require(filtered.offer(baseline())==NativeInputOffer::accepted);
+    frame=begin(filtered);require(filtered.finish_update(frame.epoch)&&evidence(filtered,frame));
+    ticks=1;require(filtered.offer(moving(2))==NativeInputOffer::accepted);frame=begin(filtered);require(filtered.finish_update(frame.epoch));
+    require(filtered.observe_held(frame.epoch,CommandButton::attack,0)&&filtered.observe_held(frame.epoch,CommandButton::guard,0));
+    // Repeated callbacks within the withheld epoch still cannot earn credit.
+    for(unsigned i=0;i<3;++i)require(!filtered.observe_resolver(frame.epoch,{},true,true,true)&&!filtered.failed()&&!filtered.consumed());
+    const auto withheld=frame.epoch;
+    ticks=2;require(filtered.offer(moving(3))==NativeInputOffer::accepted);frame=begin(filtered);require(filtered.finish_update(frame.epoch));
+    require(!filtered.observe_resolver(withheld,movement,true,true,true)&&!filtered.consumed());
+    require(evidence(filtered,frame)&&filtered.consumed()->source.frame_sequence==3&&filtered.consumed()->input.movement==movement);
+    // This policy never tolerates a later loss of movement or a wrong nonzero
+    // direction, and fresh command sequence numbers cannot renew the onset.
+    ticks=3;require(filtered.offer(moving(4))==NativeInputOffer::accepted);frame=begin(filtered);require(filtered.finish_update(frame.epoch));
+    require(!filtered.observe_resolver(frame.epoch,{},true,true,true)&&filtered.failed()&&!filtered.consumed());
+
+    ticks=0;NativeCommandMailbox blocked(7,&clock_read,NativeMovementOnset::defer_first_zero);
+    require(blocked.offer(baseline())==NativeInputOffer::accepted);frame=begin(blocked);require(blocked.finish_update(frame.epoch)&&evidence(blocked,frame));
+    ticks=1;require(blocked.offer(moving(2))==NativeInputOffer::accepted);frame=begin(blocked);require(blocked.finish_update(frame.epoch));
+    require(!blocked.observe_resolver(frame.epoch,{},true,true,true)&&!blocked.failed());
+    // Even without a newer packet, the next engine update must resolve it.
+    ticks=2;frame=begin(blocked);require(blocked.finish_update(frame.epoch));
+    require(!blocked.observe_resolver(frame.epoch,{},true,true,true)&&blocked.failed());
+
+    ticks=0;NativeCommandMailbox wrong(7,&clock_read,NativeMovementOnset::defer_first_zero);
+    require(wrong.offer(baseline())==NativeInputOffer::accepted);frame=begin(wrong);require(wrong.finish_update(frame.epoch)&&evidence(wrong,frame));
+    ticks=1;require(wrong.offer(moving(2))==NativeInputOffer::accepted);frame=begin(wrong);require(wrong.finish_update(frame.epoch));
+    require(!wrong.observe_resolver(frame.epoch,{{1,0},.35f},true,true,true)&&wrong.failed());
+
+    // Resetting command association without an actual neutral native update
+    // cannot renew a withheld onset. This includes a fresh baseline, suspend,
+    // and a newer input generation on the same native controller.
+    for(unsigned reset=0;reset<3;++reset){
+        ticks=0;NativeCommandMailbox rebaseline(7,&clock_read,NativeMovementOnset::defer_first_zero);
+        require(rebaseline.offer(baseline())==NativeInputOffer::accepted);frame=begin(rebaseline);
+        require(rebaseline.finish_update(frame.epoch)&&evidence(rebaseline,frame));
+        ticks=1;require(rebaseline.offer(moving(2))==NativeInputOffer::accepted);frame=begin(rebaseline);
+        require(rebaseline.finish_update(frame.epoch)&&!rebaseline.observe_resolver(frame.epoch,{},true,true,true)&&!rebaseline.failed());
+        if(reset==1)rebaseline.suspend();
+        if(reset==2)require(rebaseline.reset_generation(8));
+        ticks=2;auto replacement=baseline(reset==2?8:7,reset==2?1:3);replacement.state.input.movement=movement;
+        require(rebaseline.offer(replacement)==NativeInputOffer::accepted);frame=begin(rebaseline);require(rebaseline.finish_update(frame.epoch));
+        require(!rebaseline.observe_resolver(frame.epoch,{},true,true,true)&&rebaseline.failed());
+    }
+    ticks=0;NativeCommandMailbox resumed(7,&clock_read,NativeMovementOnset::defer_first_zero);
+    require(resumed.offer(baseline())==NativeInputOffer::accepted);frame=begin(resumed);require(resumed.finish_update(frame.epoch)&&evidence(resumed,frame));
+    ticks=1;require(resumed.offer(moving(2))==NativeInputOffer::accepted);frame=begin(resumed);require(resumed.finish_update(frame.epoch)&&evidence(resumed,frame));
+    resumed.suspend();ticks=2;frame=begin(resumed);require(frame.input==PlayerInput{}&&!frame.source&&resumed.finish_update(frame.epoch)&&evidence(resumed,frame));
+    ticks=3;auto restart=baseline(7,3);restart.state.input.movement=movement;
+    require(resumed.offer(restart)==NativeInputOffer::accepted);frame=begin(resumed);require(resumed.finish_update(frame.epoch));
+    require(!resumed.observe_resolver(frame.epoch,{},true,true,true)&&!resumed.failed()&&!resumed.consumed());
+    ticks=4;frame=begin(resumed);require(resumed.finish_update(frame.epoch)&&evidence(resumed,frame)&&resumed.consumed().has_value());
 }
-int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();
+}
+int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();native_previous_stick_filter();
     std::cout<<"PASS portable native command mailbox, threaded ingress/update/observer epochs, actual-evidence requirements, stale/reset/pause guards and no native binding claim\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

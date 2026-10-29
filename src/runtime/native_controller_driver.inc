@@ -37,7 +37,7 @@ bool negative_passed{};
 std::optional<ControllerScenario> scenario;
 PlayerCommandReceiver receiver{supported};
 std::uint64_t native_milliseconds() noexcept {return GetTickCount64();}
-NativeCommandMailbox mailbox{1,&native_milliseconds};
+NativeCommandMailbox mailbox{1,&native_milliseconds,NativeMovementOnset::defer_first_zero};
 CommandScope command_scope;
 std::uint64_t generation{1},load_at{},neutral_at{},last_world_at{},negative_at{};
 std::atomic<std::uint64_t> native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{},primary_frames{};

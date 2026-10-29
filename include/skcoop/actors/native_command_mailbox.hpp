@@ -29,6 +29,13 @@ struct NativeConsumedInput {
     std::uint64_t observed_ms{};
     bool held_state_observed{};
 };
+enum class NativeMovementOnset {
+    strict,
+    // Exact native binding only: its previous-stick filter may suppress the
+    // first neutral-to-moving update. That zero result earns no consumption;
+    // the next native update must match normally. Not a time-based grace.
+    defer_first_zero
+};
 // Serializes receiver ingress and one actor's native update/observation threads.
 // Engine calls must execute outside these methods. The supplied clock is a
 // non-reentrant monotonic read, sampled only while the short mutex is held.
@@ -38,7 +45,8 @@ class NativeCommandMailbox {
 public:
     using Clock=std::uint64_t(*)()noexcept;
     static constexpr std::uint64_t observation_expiry_ms=100;
-    NativeCommandMailbox(std::uint64_t input_generation,Clock);
+    NativeCommandMailbox(std::uint64_t input_generation,Clock,
+                         NativeMovementOnset=NativeMovementOnset::strict);
     NativeInputOffer offer(const CommandDelivery&);
     NativeInputFrame begin_update();
     // Matching completion retires the original Pad slot. This is not by itself
@@ -65,10 +73,12 @@ private:
     mutable std::mutex mutex_;
     NativeInputLatch latch_;
     Clock clock_{};
+    NativeMovementOnset movement_onset_{};
     std::uint64_t generation_{},epoch_counter_{},clock_at_{},issued_at_{},completed_at_{},flight_epoch_{};
     NativeInputFrame frame_;
     NativeMailboxFailure failure_;
     bool clock_seen_{},failed_{},in_flight_{},association_{},ready_{};
+    bool previous_moving_{},onset_frame_{};
     bool resolver_gate_{},resolver_speed_{},resolver_angle_{},attack_seen_{},guard_seen_{};
     MovementIntent resolved_movement_;
     ButtonMask resolved_held_{};

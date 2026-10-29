@@ -11,8 +11,8 @@ bool same_movement(const MovementIntent& a,const MovementIntent& b)noexcept {
         std::abs(a.direction[0]-b.direction[0])<=tolerance&&std::abs(a.direction[1]-b.direction[1])<=tolerance;
 }
 }
-NativeCommandMailbox::NativeCommandMailbox(std::uint64_t generation,Clock clock)
-    :latch_(generation),clock_(clock),generation_(generation){
+NativeCommandMailbox::NativeCommandMailbox(std::uint64_t generation,Clock clock,NativeMovementOnset onset)
+    :latch_(generation),clock_(clock),movement_onset_(onset),generation_(generation){
     std::lock_guard lock(mutex_);std::uint64_t now{};
     if(!clock_){fail_locked(NativeMailboxFault::invalid_clock);return;}
     if(!generation){fail_locked(NativeMailboxFault::latch_failure);return;}
@@ -27,6 +27,9 @@ bool NativeCommandMailbox::advance_epoch_locked(){
 void NativeCommandMailbox::invalidate_locked(){
     advance_epoch_locked(); // Record exhaustion before clearing diagnostic values.
     association_=ready_=false;
+    // Invalidating a source association does not run the native Pad. Only an
+    // actual neutral begin_update may rearm its previous-stick onset allowance.
+    onset_frame_=false;
     resolver_gate_=resolver_speed_=resolver_angle_=attack_seen_=guard_seen_=false;
     resolved_movement_={};resolved_held_=0;
     resolver_at_=attack_at_=guard_at_=completed_at_=0;
@@ -72,6 +75,9 @@ NativeInputFrame NativeCommandMailbox::begin_update(){
     // A baseline-pending latch still supplies a valid neutral Pad update. Its
     // original must be finished/abandoned normally, but it has no source claim.
     frame_.accepted=true;frame_.source=latch_.source_identity();
+    const bool moving=frame_.input.movement.intensity>0;
+    onset_frame_=movement_onset_==NativeMovementOnset::defer_first_zero&&moving&&!previous_moving_;
+    previous_moving_=moving;
     if(frame_.source&&(frame_.source->input_generation!=generation_||!frame_.source->frame_sequence)){
         fail_locked(NativeMailboxFault::invalid_source);return {};
     }
@@ -109,7 +115,15 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
     }
     const PlayerInput observed{resolved,resolved_held_};
     if(!valid(PlayerInput{resolved,0})){fail_locked(NativeMailboxFault::invalid_movement,observed);return false;}
-    if(!same_movement(resolved,frame_.input.movement)){fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;}
+    if(!same_movement(resolved,frame_.input.movement)){
+        // The supported Pad's previous-stick filter can produce exactly zero
+        // on its first moving update. Keep the actual zero uncredited; neither
+        // submitted input nor a prior epoch may stand in for consumption.
+        if(onset_frame_&&resolved==MovementIntent{}){
+            resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
+        }
+        fail_locked(NativeMailboxFault::movement_mismatch,observed);return false;
+    }
     resolver_gate_=resolver_speed_=resolver_angle_=true;resolved_movement_=resolved;resolver_at_=now;return true;
 }
 bool NativeCommandMailbox::observe_held(std::uint64_t epoch,CommandButton button,float duration){
