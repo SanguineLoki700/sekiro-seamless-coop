@@ -140,6 +140,11 @@ bool valid_initial_status() noexcept {
     if(load(diagnostic.kind)||load(diagnostic.latch_fault)||load(diagnostic.button)||load(diagnostic.expected_held)||
         load(diagnostic.observed_held)||load(diagnostic.held_ms)||load(diagnostic.epoch))return false;
     for(unsigned i=0;i<3;++i)if(load(diagnostic.expected_move_milli[i])||load(diagnostic.observed_move_milli[i]))return false;
+    const auto& movement=shared->native_controller_movement;
+    if(load(movement.query_mask)||load(movement.yaw_milli)||load(movement.speed_milli)||load(movement.angle_milli)||
+        load(movement.pad_epoch)||load(movement.consumer_epoch)||load(movement.resolver_epoch))return false;
+    for(unsigned i=0;i<2;++i)if(load(movement.axes_milli[i]))return false;
+    for(unsigned i=0;i<4;++i)if(load(movement.after_pad_milli[i])||load(movement.at_consumer_milli[i])||load(movement.after_resolver_milli[i]))return false;
     return true;
 }
 

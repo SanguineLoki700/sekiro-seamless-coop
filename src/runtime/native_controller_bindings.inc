@@ -3,6 +3,7 @@
 namespace native_commands {
 struct Entry {std::uintptr_t rva;const char* digest;};
 constexpr Entry entries[]{
+    {0x9efea0,"decc4a78d886235e83d2ae086bb2f9998ccda0e0761455cebc0efef5b15b6baa"},
     {0xff3570,"6e4e5585f3f31ab53c2424583b8f8c7b94ce214341f4a757080f2716a9f7dd9d"},
     {0x7ef120,"2daffff079e5d1f821e4d889c46ae5086df5270825d6af4543e72822e809af22"},
     {0xb258d0,"282bd4495ef81d8e9e34d532f5203c3e5223b80139d8e65d17d5949e7d8c657a"},

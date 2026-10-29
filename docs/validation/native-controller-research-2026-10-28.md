@@ -52,4 +52,16 @@ O participante também informou que precisava criar um jogo novo a cada candidat
 
 O recibo passa a conservar o primeiro subtipo de falha da caixa de comandos, com atualização, valores esperados/observados e origem do erro. Evidências incompatíveis continuam sendo recusadas; o diagnóstico não relaxa o verificador. Valores não finitos são serializados por sentinela inteira, sem JSON inválido.
 
+## Continuação — leitura no consumidor
+
+O candidato `a5630e6b52640c44dd02f763b59d4c04e25262ec` carregou o perfil co-op no caminho efetivamente usado pelo assistente. Registrou o controle negativo esperado, 30 comandos emitidos e 29 consumidos durante a entrada neutra. No primeiro comando de caminhada, a caixa recusou a diferença entre direção mundial solicitada `(0, 1)`, intensidade `0,35`, e direção observada zero. A sequência não foi aprovada. O jogo encerrou normalmente, código 0, sem timeout; saves pessoais, backup e gráficos preservados, com hashes reconferidos independentemente.
+
+Uma observação limitada de quatro segundos confirmou o getter `9EFEA0` retornando o controlador do convidado ao chamador `B4B019`, 239 vezes, em threads de trabalho do motor. Os trechos retidos mostram a leitura do vetor imediatamente após esse retorno. Evidência `a58efdc46a1e6ed722093ccb83c2483cec116d6d7a9f41a1e66f7739e1ba7876`. Não houve alteração de argumentos, resultados, valores do jogo ou chamadas de funções do jogo; apenas instrumentação temporária de observação, removida ao terminar.
+
+O validador passa a observar esse ponto do consumidor, conservando a exigência das escritas nativas posteriores e das consultas de controles mantidos. O diagnóstico registra os valores após o produtor, no consumidor e após o resolver para distinguir entrada ignorada de leitura tardia. A causa da divergência ainda precisa ser demonstrada; não se presume que o motor limpou o vetor.
+
+Outra leitura confirmou, no original e no convidado, que o índice global 384 é mapeado para o slot local 164, com tipo nativo int32 e valor zero no estado observado. Evidência `e8b3e822f07fb0af0cc7e4afd216d1fefb61acbbc31d2a99a0e20a74a294b49f`. O diagnóstico anterior indexava a metadata pelo índice global e lia dois bytes do tipo; foi corrigido para usar o slot local e o byte de tipo. Isso corrige a leitura, sem classificar automaticamente ataque ou defesa.
+
+As observações REA foram encerradas. O novo ponto de leitura e o diagnóstico continuam aguardando execução da sequência positiva no jogo. Não há novos pontos, aceitação de combate ou teste novo entre máquinas.
+
 Ainda faltam executar o novo caminho restrito de propriedade, comprovar caminhada física com consumo downstream, vincular resultados reais de ataque/defesa e executar a sequência positiva e o controle negativo no jogo. Depois, ligar comandos versionados ao TCP existente e validar dois jogos, contato, dano e postura com autoridade do anfitrião. Não há aceitação nova de LAN, Steam, combate compartilhado ou quatro participantes.

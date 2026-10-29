@@ -13,9 +13,11 @@ struct PadScope {
     PlayerInput supplied,captured;
     NativeStickAxes axes;
     NativeInputFrame frame;
+    unsigned axis_mask{};float basis_yaw{};
 };
 thread_local PadScope* pad_scope{};
-struct ParameterScope {Token actor{},character{},overrides{};std::uint64_t epoch{};bool gate_seen{},speed_seen{},angle_seen{};float speed{},angle{};};
+struct ParameterScope {Token actor{},character{},overrides{};std::uint64_t epoch{};
+    bool gate_seen{},speed_seen{},angle_seen{},input_read{};float speed{},angle{};MovementIntent movement;};
 thread_local ParameterScope* parameter_scope{};
 std::atomic<Token> owned_controller{},owned_actor{},primary_controller{};
 std::atomic<DWORD> owner_thread{};
@@ -24,6 +26,9 @@ std::atomic<bool> retired{};
 std::atomic<bool> trial_finished{};
 Binding guest,source;
 std::mutex primary_lock;
+struct MovementProbe {std::uint64_t epoch{};unsigned flags{},axis_mask{};float yaw{},speed{},angle{};
+    std::array<float,2> axes{};Vector after_pad{},at_consumer{},after_resolver{};};
+MovementProbe movement_probe; // First moving native update only, protected by primary_lock.
 PlayerInput primary_input;
 PlayerCommandCapture primary_capture{1,supported};
 std::uint64_t primary_at{};
@@ -50,6 +55,7 @@ using Parameters=void (*)(void*);
 using IsAdditional=std::uint8_t (*)(void*);
 using Held=float (*)(void*,int);
 using Pressed=std::uint8_t (*)(void*,int,int);
+using GetController=void* (*)(void*);
 ControllerUpdate real_pad{};
 RawButton real_button{};
 LogicalMap real_map{};
@@ -60,6 +66,7 @@ IsAdditional real_additional{};
 Held real_held{};
 Pressed real_pressed{};
 WriteGraphFloat real_graph_set{};
+GetController real_get_controller{};
 
 enum class StopReason:LONG {none,internal,ownership,wrong_thread,invalid_delta,source_axes,
     source_projection,capture_overflow,projection,world_gap,focus_lost,source_stale,delivery,negative_control,trace_overflow,
@@ -77,6 +84,10 @@ void retire() noexcept {
     primary_controller.store(0,std::memory_order_release);
 }
 bool on_thread() noexcept {return owner_thread.load(std::memory_order_acquire)==GetCurrentThreadId();}
+LONG metric_milli(float value) noexcept {
+    if(!std::isfinite(value))return std::numeric_limits<LONG>::min();
+    return static_cast<LONG>(std::llround(std::clamp(static_cast<double>(value)*1000.,-2147483647.,2147483647.)));
+}
 bool relationships(const Binding& b,bool graph_ready=false) {
     if(!b.actor||!b.world||!b.registry||pointer(base+0x3d7a1e0)!=b.world||
        pointer(b.world+0x88)!=b.primary||pointer(b.world+0x48)!=b.registry||
@@ -126,7 +137,7 @@ int read_state() {
         for(int i=0;i<=mask;++i){const auto item=slots+i*16;
             if(read<std::int64_t>(item)==384){if(slot!=-1)throw InputFailure{Error::input_value};slot=read<int>(item+8);}}
         const auto metadata=pointer(pointer(values+0xd0)+0x28);
-        if(slot<0||slot>4095||read<std::int16_t>(metadata+384*6+4)!=3)throw InputFailure{Error::input_value};
+        if(slot<0||slot>8191||read<std::int8_t>(metadata+slot*6+4)!=3)throw InputFailure{Error::input_value};
         state_character=character;state_values=values;state_entries=slots;state_storage=storage;state_slot=slot;
     }
     return read<int>(storage+state_slot*4);
@@ -191,7 +202,8 @@ std::uint8_t raw_button(void* context,int code) {
 bool prepare_axes(PadScope& scope) noexcept {
     try {
         if(scope.supplied.movement.intensity==0){scope.axes={};scope.axes_ready=true;return true;}
-        const auto projected=project_native_stick(scope.supplied.movement,read<float>(scope.controller+0x94));
+        scope.basis_yaw=read<float>(scope.controller+0x94);
+        const auto projected=project_native_stick(scope.supplied.movement,scope.basis_yaw);
         if(!projected)return false;
         scope.axes=*projected;scope.axes_ready=true;return true;
     }catch(...){return false;}
@@ -205,6 +217,7 @@ template<std::size_t Index> float axis(void* context) {
     auto* scope=pad_scope;
     if(!scope||retired.load())return real_axes[Index](context);
     if(scope->guest){++native_queries;if(!scope->usable||aborted.load())return 0;
+        scope->axis_mask|=1u<<Index;
         // The original Pad can update its camera/control basis after entry.
         // Resolve world-plane intent at the actual input-query phase, then use
         // one immutable projection for this update's raw/processed axis pairs.
@@ -240,6 +253,10 @@ void pad_before(PadScope& scope,void* controller,void* component,float delta) no
                 scope.frame=mailbox.begin_update();
                 if(!scope.frame.accepted){scope.usable=false;fault(StopReason::mailbox_error);return;}
                 scope.supplied=scope.frame.input;
+                if(scope.supplied.movement.intensity>0){
+                    std::lock_guard lock(primary_lock);
+                    if(!movement_probe.epoch)movement_probe.epoch=scope.frame.epoch;
+                }
             }
         }
     }catch(...){scope.usable=false;fault();}
@@ -250,7 +267,19 @@ void guarded_pad_before(PadScope& scope,void* controller,void* component,float d
 void pad_after(PadScope& scope) noexcept {
     try {
         if(!scope.usable)return;
-        if(scope.guest){if(scope.frame.accepted){mailbox.finish_update(scope.frame.epoch);scope.completion_called=true;}return;}
+        if(scope.guest){
+            if(scope.frame.accepted){
+                const bool completed=mailbox.finish_update(scope.frame.epoch);scope.completion_called=true;
+                if(completed&&scope.frame.input.movement.intensity>0&&consumer_epoch()==scope.frame.epoch){
+                    const auto actual=read<Vector>(scope.controller+0x10);
+                    if(consumer_epoch()==scope.frame.epoch){std::lock_guard lock(primary_lock);
+                    if(movement_probe.epoch==scope.frame.epoch&&!(movement_probe.flags&1)){movement_probe.flags|=1;
+                        movement_probe.axis_mask=scope.axis_mask;movement_probe.yaw=scope.basis_yaw;
+                        movement_probe.axes=scope.axes.raw;movement_probe.after_pad=actual;}}
+                }
+            }
+            return;
+        }
         if(trial_finished.load(std::memory_order_acquire))return;
         // This is the native Pad's contextualized result, observed before the
         // behavior/action selection. It is source input, not an animation event
@@ -300,16 +329,16 @@ void pad_update(void* controller,float delta,void* component) {
 void parameters_after(const ParameterScope& scope) noexcept {
     try {
         if(!relationships(guest,true))return;
-        const auto direction=read<Vector>(guest.controller+0x10);
-        if(!valid_position(direction))throw InputFailure{Error::input_value};
-        const auto intensity=std::hypot(direction[0],direction[2]);
-        if(intensity>1.001f)throw InputFailure{Error::input_value};
-        MovementIntent movement;
-        if(intensity>.00001f)movement={{direction[0]/intensity,direction[2]/intensity},std::min(intensity,1.f)};
+        if(scope.epoch&&consumer_epoch()==scope.epoch){
+            const auto after=read<Vector>(guest.controller+0x10);
+            if(consumer_epoch()==scope.epoch){std::lock_guard lock(primary_lock);
+                if(movement_probe.epoch==scope.epoch&&!(movement_probe.flags&4)){
+                    movement_probe.after_resolver=after;movement_probe.speed=scope.speed;movement_probe.angle=scope.angle;movement_probe.flags|=4;}}
+        }
         // Returning from B49D30, or rereading controller+10, does not prove the
         // formerly skipped branch ran. Require its scoped predicate and actual
         // original engine writes into this guest's own behavior parameters.
-        if(mailbox.observe_resolver(scope.epoch,movement,scope.gate_seen,scope.speed_seen,scope.angle_seen))++native_resolvers;
+        if(mailbox.observe_resolver(scope.epoch,scope.movement,scope.gate_seen&&scope.input_read,scope.speed_seen,scope.angle_seen))++native_resolvers;
     }catch(...){fault();}
 }
 void guarded_parameters_after(const ParameterScope& scope) noexcept {
@@ -344,6 +373,35 @@ void parameters(void* behavior) {
 std::uint8_t is_additional(void* actor) {
     if(parameter_scope&&!retired.load()&&reinterpret_cast<Token>(actor)==parameter_scope->actor){parameter_scope->gate_seen=true;return 0;}
     return real_additional(actor);
+}
+void capture_consumer_input(ParameterScope& scope,Token controller) noexcept {
+    try {
+        if(!scope.epoch||consumer_epoch()!=scope.epoch)return;
+        const auto direction=read<Vector>(controller+0x10);
+        if(consumer_epoch()!=scope.epoch)return;
+        if(!valid_position(direction))throw InputFailure{Error::input_value};
+        const auto intensity=std::hypot(direction[0],direction[2]);
+        if(intensity>1.001f)throw InputFailure{Error::input_value};
+        scope.movement={};
+        if(intensity>.00001f)scope.movement={{direction[0]/intensity,direction[2]/intensity},std::min(intensity,1.f)};
+        scope.input_read=true;
+        std::lock_guard lock(primary_lock);
+        if(movement_probe.epoch==scope.epoch&&!(movement_probe.flags&2)){movement_probe.at_consumer=direction;movement_probe.flags|=2;}
+    }catch(...){fault();}
+}
+void guarded_consumer_input(ParameterScope& scope,Token controller) noexcept {
+    __try {capture_consumer_input(scope,controller);}__except(EXCEPTION_EXECUTE_HANDLER){fault();}
+}
+void* controller_for_actor(void* actor) {
+    const auto caller=reinterpret_cast<Token>(_ReturnAddress());
+    auto* result=real_get_controller(actor);
+    // The observed B4AFD0 caller loads [returned controller+10] immediately
+    // after this call. Observe that input before later stages can consume it.
+    if(parameter_scope&&!retired.load()&&caller==base+0xb4b019&&reinterpret_cast<Token>(actor)==parameter_scope->actor){
+        if(reinterpret_cast<Token>(result)!=guest.controller){fault(StopReason::ownership);return result;}
+        regions.begin();guarded_consumer_input(*parameter_scope,reinterpret_cast<Token>(result));regions.end();
+    }
+    return result;
 }
 void observe_graph_set(const GraphVariable* variable,float value) {
     real_graph_set(variable,value);
@@ -394,24 +452,42 @@ void adopt_native_command_actor(Token actor) {
 }
 void publish_native_commands() noexcept {
     using namespace native_commands;
+    try {
+        MovementProbe probe;{std::lock_guard lock(primary_lock);probe=movement_probe;}
+        auto& output=status->native_controller_movement;
+        // Each stage of the first moving update is immutable. Its epoch is
+        // published last; stages can finish on different engine workers.
+        if((probe.flags&1)&&!InterlockedCompareExchange64(&output.pad_epoch,0,0)){
+            InterlockedExchange(&output.query_mask,static_cast<LONG>(probe.axis_mask));
+            InterlockedExchange(&output.yaw_milli,metric_milli(probe.yaw));
+            for(unsigned i=0;i<2;++i)InterlockedExchange(&output.axes_milli[i],metric_milli(probe.axes[i]));
+            for(unsigned i=0;i<4;++i)InterlockedExchange(&output.after_pad_milli[i],metric_milli(probe.after_pad[i]));
+            InterlockedExchange64(&output.pad_epoch,static_cast<LONG64>(probe.epoch));
+        }
+        if((probe.flags&2)&&!InterlockedCompareExchange64(&output.consumer_epoch,0,0)){
+            for(unsigned i=0;i<4;++i)InterlockedExchange(&output.at_consumer_milli[i],metric_milli(probe.at_consumer[i]));
+            InterlockedExchange64(&output.consumer_epoch,static_cast<LONG64>(probe.epoch));
+        }
+        if((probe.flags&4)&&!InterlockedCompareExchange64(&output.resolver_epoch,0,0)){
+            for(unsigned i=0;i<4;++i)InterlockedExchange(&output.after_resolver_milli[i],metric_milli(probe.after_resolver[i]));
+            InterlockedExchange(&output.speed_milli,metric_milli(probe.speed));InterlockedExchange(&output.angle_milli,metric_milli(probe.angle));
+            InterlockedExchange64(&output.resolver_epoch,static_cast<LONG64>(probe.epoch));
+        }
+    }catch(...){fault();}
     // First native mailbox failure is immutable. Publish its kind last so a
     // host never treats a partially copied diagnostic as a complete result.
     auto& diagnostic=status->native_controller_mailbox;
     if(!InterlockedCompareExchange(&diagnostic.kind,0,0))try {
         const auto failure=mailbox.failure();
         if(failure.kind!=NativeMailboxFault::none){
-            const auto milli=[](float value)noexcept->LONG {
-                if(!std::isfinite(value))return std::numeric_limits<LONG>::min();
-                return static_cast<LONG>(std::llround(std::clamp(static_cast<double>(value)*1000.,-2147483647.,2147483647.)));
-            };
             InterlockedExchange(&diagnostic.latch_fault,static_cast<LONG>(failure.latch_fault));
             InterlockedExchange(&diagnostic.button,static_cast<LONG>(failure.button));
             InterlockedExchange(&diagnostic.expected_held,static_cast<LONG>(failure.expected.held));
             InterlockedExchange(&diagnostic.observed_held,static_cast<LONG>(failure.observed.held));
-            InterlockedExchange(&diagnostic.held_ms,milli(failure.held_duration));
+            InterlockedExchange(&diagnostic.held_ms,metric_milli(failure.held_duration));
             const float expected[]{failure.expected.movement.direction[0],failure.expected.movement.direction[1],failure.expected.movement.intensity};
             const float observed[]{failure.observed.movement.direction[0],failure.observed.movement.direction[1],failure.observed.movement.intensity};
-            for(unsigned i=0;i<3;++i){InterlockedExchange(&diagnostic.expected_move_milli[i],milli(expected[i]));InterlockedExchange(&diagnostic.observed_move_milli[i],milli(observed[i]));}
+            for(unsigned i=0;i<3;++i){InterlockedExchange(&diagnostic.expected_move_milli[i],metric_milli(expected[i]));InterlockedExchange(&diagnostic.observed_move_milli[i],metric_milli(observed[i]));}
             InterlockedExchange64(&diagnostic.epoch,static_cast<LONG64>(failure.epoch));
             InterlockedExchange(&diagnostic.kind,static_cast<LONG>(failure.kind));
         }
@@ -570,6 +646,7 @@ bool install_native_command_hooks(bool detach=false) noexcept {
         real_parameters=reinterpret_cast<Parameters>(base+0xb49d30);real_additional=reinterpret_cast<IsAdditional>(base+0x9f36c0);
         real_held=reinterpret_cast<Held>(base+0xb2b380);real_pressed=reinterpret_cast<Pressed>(base+0xb2b6d0);
         real_graph_set=reinterpret_cast<WriteGraphFloat>(base+0xff3570);
+        real_get_controller=reinterpret_cast<GetController>(base+0x9efea0);
     }
     bool begun=false;LONG result=ERROR_INVALID_FUNCTION;
     if(okay){result=DetourTransactionBegin();begun=result==NO_ERROR;}
@@ -588,6 +665,7 @@ bool install_native_command_hooks(bool detach=false) noexcept {
         change(real_parameters,&parameters);change(real_additional,&is_additional);
         change(real_held,&held);change(real_pressed,&pressed);
         change(real_graph_set,&observe_graph_set);
+        change(real_get_controller,&controller_for_actor);
         if(result==NO_ERROR)result=DetourTransactionCommit();else DetourTransactionAbort();
     }
     for(std::size_t i=0;i<count;++i)CloseHandle(threads[i]);

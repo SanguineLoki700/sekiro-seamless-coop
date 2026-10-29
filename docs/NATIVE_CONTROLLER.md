@@ -34,6 +34,8 @@ Foi identificado um teste de papel que exclui jogadores adicionais do cálculo d
 
 O observador exige chamadas nativas originais que escrevem os parâmetros do grafo do próprio convidado, além da visita ao teste de papel e das consultas nativas de controles mantidos. Ler de volta o comando ou o vetor fornecido pelo adaptador não basta. A observação dessas escritas não as transforma em comandos de rede, e o adaptador não chama o setter do grafo.
 
+A direção é observada no getter chamado pelo cálculo nativo de movimento, imediatamente antes da instrução que a lê. O diagnóstico conserva o primeiro comando de caminhada em três pontos: após o Pad, na leitura do consumidor e após o resolver. Os estágios têm marcadores imutáveis e só recebem a atualização comprovada pelos checks anteriores e posteriores à leitura. A comparação e as condições de falha continuam iguais.
+
 Um binding inclui mundo, registro, ator, handles observados, controlador, componentes, raiz e módulos próprios. Mudança de identidade aposenta as referências publicadas; endereço antigo não continua selecionado. Um ator ainda válido recebe entrada neutra depois do término. Os escopos de entrada e propriedade são restaurados em retorno normal, chamadas aninhadas, exceções C++ e SEH; a limpeza possui teste com um executável próprio.
 
 Durante a preparação, pausas de carregamento mantêm o convidado neutro e reiniciam a espera de estabilidade. Depois de armar a sequência, perda de foco, atualização expirada ou erro interrompem o teste. O recibo conserva a primeira causa de parada; não há retomada silenciosa de comandos antigos.

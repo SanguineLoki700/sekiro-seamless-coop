@@ -369,7 +369,21 @@ std::string counters(const SharedStatus& s) {
             <<",\"expected_move_milli\":["<<load(diagnostic.expected_move_milli[0])<<','<<load(diagnostic.expected_move_milli[1])<<','<<load(diagnostic.expected_move_milli[2])
             <<"],\"observed_move_milli\":["<<load(diagnostic.observed_move_milli[0])<<','<<load(diagnostic.observed_move_milli[1])<<','<<load(diagnostic.observed_move_milli[2])<<"]}";
     }
-    value<<",\"result_is_provisional\":true}}";
+    const auto& movement=s.native_controller_movement;
+    const auto pad_epoch=load(movement.pad_epoch),consumer_epoch=load(movement.consumer_epoch),resolver_epoch=load(movement.resolver_epoch);
+    const auto vector=[&](const volatile LONG* data){value<<'[';for(unsigned i=0;i<4;++i){if(i)value<<',';value<<load(data[i]);}value<<']';};
+    value<<",\"movement_probe\":{\"pad\":";
+    if(!pad_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<pad_epoch<<",\"query_mask\":"<<load(movement.query_mask)<<",\"yaw_milli\":"<<load(movement.yaw_milli)
+        <<",\"axes_milli\":["<<load(movement.axes_milli[0])<<','<<load(movement.axes_milli[1])<<"],\"vector_milli\":";vector(movement.after_pad_milli);value<<'}';}
+    value<<",\"consumer\":";
+    if(!consumer_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<consumer_epoch<<",\"vector_milli\":";vector(movement.at_consumer_milli);value<<'}';}
+    value<<",\"after\":";
+    if(!resolver_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<resolver_epoch<<",\"vector_milli\":";vector(movement.after_resolver_milli);
+        value<<",\"speed_milli\":"<<load(movement.speed_milli)<<",\"angle_milli\":"<<load(movement.angle_milli)<<'}';}
+    value<<"},\"result_is_provisional\":true}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
