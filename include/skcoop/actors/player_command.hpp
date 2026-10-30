@@ -121,7 +121,7 @@ private:
 struct NativePlayerState {
     bool valid{},ready{};
     std::array<float,3> position{};
-    bool attacking{},guarding{};
+    bool attacking{},guarding{},action_idle{}; // Actual recovery, not merely two absent flags.
     std::uint64_t consumed_input_generation{},consumed_frame_sequence{};
 };
 class NativeControllerAdapter {

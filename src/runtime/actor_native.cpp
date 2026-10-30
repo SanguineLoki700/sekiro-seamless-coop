@@ -15,6 +15,7 @@
 #include "skcoop/actors/native_input_latch.hpp"
 #include "skcoop/actors/native_command_mailbox.hpp"
 #include "skcoop/actors/native_input_projection.hpp"
+#include "native_action_state.h"
 #include <detours.h>
 #include <TlHelp32.h>
 #include <bcrypt.h>

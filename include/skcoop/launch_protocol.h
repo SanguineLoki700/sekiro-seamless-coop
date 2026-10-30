@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=15;
+inline constexpr std::uint32_t protocol_version=16;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -48,13 +48,17 @@ struct Payload {
 // counters are naturally aligned. Runtime never owns/deletes the host's files.
 inline constexpr std::size_t native_trace_capacity=128;
 inline constexpr LONG native_trace_position_valid=1,native_trace_consumption_valid=2,native_trace_tail_complete=4;
+inline constexpr LONG native_trace_action_bound=8,native_trace_attacking=16,native_trace_guarding=32,native_trace_action_idle=64;
 struct alignas(8) NativeControllerTrace {
     volatile LONG phase,state_code;
     volatile LONG64 input_generation,frame_sequence,elapsed_ms;
     // Position is relative to the trial origin, never an absolute coordinate.
     // resolved_milli is [world direction X, world direction Z, intensity].
     volatile LONG position_mm[3],resolved_milli[3],held_mask,observation_flags;
-    // Flags: position_valid, consumption_valid, tail_complete (position only).
+    // Flags: position_valid, consumption_valid, tail_complete (position only),
+    // action_bound, actual attacking, actual held guard, actual action idle.
+    // The last three are meaningful only with action_bound. state_code is the
+    // canonical action category in protocol 16, not a stale branch variable.
     // A tail marker supplies no input evidence without consumption_valid.
 };
 struct alignas(8) NativeMailboxDiagnostic {

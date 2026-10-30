@@ -24,7 +24,7 @@ def package(binary_dir: Path, output: Path) -> None:
     manifest = {
         "kind": "owner-lan-actions-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 15,
+        "launch_protocol": 16,
         "native_motion_adapter": 4,
         "automatic_lan_discovery": True,
         "save_mode": "independent-per-steam-account",

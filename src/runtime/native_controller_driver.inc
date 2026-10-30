@@ -51,10 +51,8 @@ std::array<float,3> physical_trace_origin{};
 bool physical_trace_origin_set{},terminal_trace_done{},terminal_trace_coherent{true},release_neutral_traced{};
 std::atomic<std::uint64_t> native_queries{},native_resolvers{},native_held_queries{},native_pressed_queries{},primary_frames{};
 int state_code{};
-Token state_character{},state_values{},state_entries{},state_storage{};
-int state_slot{-1};
-// No action-result enum is inferred from a button level or provider writeback.
-constexpr bool action_output_bound=false;
+bool action_output_bound{},action_prepared{};
+runtime::NativeActionStateReader action_reader;
 
 using RawButton=std::uint8_t (*)(void*,int);
 using LogicalMap=int (*)(int);
@@ -139,37 +137,30 @@ bool guarded_verify(const Binding& b,bool ready=false) noexcept {
 void neutralize() noexcept {try {mailbox.suspend();}catch(...){fault();}}
 std::uint64_t consumer_epoch() noexcept {try {return mailbox.current_epoch();}catch(...){fault();return 0;}}
 
-// Read native results with their actual metadata type. The observed Stand state
-// is diagnostic; an unknown state number is never classified as attack/guard.
-int read_state() {
-    const auto graph=pointer(guest.behavior+0x10),character=pointer(graph+0x28);
-    const auto values=pointer(character+0x98),map=pointer(values+0x100)+0x28;
-    const auto slots=pointer(map),storage=pointer(pointer(values+0x118)+0x18);
-    if(character!=state_character||values!=state_values||slots!=state_entries||storage!=state_storage){
-        const auto mask=read<int>(map+12);
-        if(mask<1||mask>8191||((mask+1)&mask)!=0||!slots)throw InputFailure{Error::input_range};
-        int slot=-1;
-        for(int i=0;i<=mask;++i){const auto item=slots+i*16;
-            if(read<std::int64_t>(item)==384){if(slot!=-1)throw InputFailure{Error::input_value};slot=read<int>(item+8);}}
-        const auto metadata=pointer(pointer(values+0xd0)+0x28);
-        if(slot<0||slot>8191||read<std::int8_t>(metadata+slot*6+4)!=3)throw InputFailure{Error::input_value};
-        state_character=character;state_values=values;state_entries=slots;state_storage=storage;state_slot=slot;
-    }
-    return read<int>(storage+state_slot*4);
+bool read_action_bytes(Token address,void* output,std::size_t size) {
+    if(!readable(address,size))return false;
+    std::memcpy(output,reinterpret_cast<const void*>(address),size);return true;
 }
 void read_outputs(NativePlayerState& result) {
+    action_output_bound=false;state_code=std::numeric_limits<int>::min();
     if(!relationships(guest,true))return;
     const auto position=game.position(guest.actor);
     if(!valid_position(position))throw InputFailure{Error::input_value};
-    result.valid=result.ready=true;result.position={position[0],position[1],position[2]};
+    const auto wrapper=pointer(guest.behavior+0x10),character=pointer(wrapper+0x28),graph=pointer(character+0x98);
+    const auto action=action_reader.observe(base,graph,&read_action_bytes);
+    if(!relationships(guest,true)||pointer(guest.behavior+0x10)!=wrapper||pointer(wrapper+0x28)!=character||
+       pointer(character+0x98)!=graph)throw InputFailure{Error::input_owner};
+    action_output_bound=action.bound;state_code=action.category;
+    result.valid=true;result.position={position[0],position[1],position[2]};
+    result.attacking=action.attacking;result.guarding=action.guarding;result.action_idle=action.idle;
+    // A loaded model is not readiness: native map-entry motion can last several
+    // seconds. Arm once a real idle has settled, without relaxing drift limits.
+    if(action.bound&&action.idle&&action.idle_seconds>=.5f)action_prepared=true;
+    result.ready=action_prepared;
     if(const auto consumed=mailbox.consumed()){
         result.consumed_input_generation=consumed->source.input_generation;
         result.consumed_frame_sequence=consumed->source.frame_sequence;
     }
-    // Action-result classification is explicitly unbound. A missing diagnostic
-    // graph variable must remain unknown, not impersonate an action or prevent
-    // testing otherwise verified input consumption and physical movement.
-    try {state_code=read_state();}catch(...){state_code=std::numeric_limits<int>::min();}
 }
 class Adapter final:public NativeControllerAdapter {
 public:
@@ -607,6 +598,9 @@ void trace_native_command_state(std::uint64_t now,const std::optional<NativeCons
     using namespace native_commands;
     if(!scenario)return;
     const auto phase=static_cast<LONG>(scenario->report().phase);
+    const LONG action_flags=physical&&action_output_bound?
+        launch::native_trace_action_bound|(physical->attacking?launch::native_trace_attacking:0)|
+        (physical->guarding?launch::native_trace_guarding:0)|(physical->action_idle?launch::native_trace_action_idle:0):0;
     const bool neutral_anchor=scenario->report().phase==ControllerScenarioPhase::movement_release&&!release_neutral_traced&&
         consumed&&consumed->source.input_generation==generation&&consumed->input==PlayerInput{};
     const auto count=InterlockedCompareExchange(&status->native_controller_trace_count,0,0);
@@ -615,7 +609,9 @@ void trace_native_command_state(std::uint64_t now,const std::optional<NativeCons
         if(!terminal(scenario->report().phase)){fault(StopReason::trace_overflow);neutralize();}return;
     }
     if(count>0){const auto& last=status->native_controller_trace[count-1];
-        const bool changed=last.phase!=phase||last.state_code!=state_code||last.input_generation!=static_cast<LONG64>(generation);
+        const bool changed=last.phase!=phase||last.state_code!=state_code||last.input_generation!=static_cast<LONG64>(generation)||
+            (last.observation_flags&(launch::native_trace_action_bound|launch::native_trace_attacking|
+             launch::native_trace_guarding|launch::native_trace_action_idle))!=action_flags;
         const bool periodic=(scenario->report().phase==ControllerScenarioPhase::movement_release||terminal_trace_at)&&
             now>=physical_trace_at&&now-physical_trace_at>=50;
         if(!changed&&!periodic&&!force&&!neutral_anchor)return;}
@@ -627,12 +623,12 @@ void trace_native_command_state(std::uint64_t now,const std::optional<NativeCons
     item.phase=phase;item.state_code=state_code;item.input_generation=static_cast<LONG64>(generation);
     item.frame_sequence=consumed?static_cast<LONG64>(consumed->source.frame_sequence):0;
     item.elapsed_ms=static_cast<LONG64>(now-load_at);
-    LONG observation_flags=0;item.held_mask=0;
+    LONG observation_flags=action_flags;item.held_mask=0;
     for(unsigned i=0;i<3;++i){item.position_mm[i]=0;item.resolved_milli[i]=0;}
     if(physical&&physical->valid&&physical->ready){
         if(!physical_trace_origin_set){physical_trace_origin=physical->position;physical_trace_origin_set=true;}
         for(unsigned i=0;i<3;++i)item.position_mm[i]=metric_milli(physical->position[i]-physical_trace_origin[i]);
-        observation_flags=1|(tail_complete?4:0);
+        observation_flags|=1|(tail_complete?4:0);
         if(consumed){
             item.resolved_milli[0]=metric_milli(consumed->input.movement.direction[0]);
             item.resolved_milli[1]=metric_milli(consumed->input.movement.direction[1]);
@@ -651,10 +647,10 @@ bool sample_terminal_position(NativePlayerState& result) noexcept {
     try {
         const auto actor=owned_actor.load(std::memory_order_acquire);
         if(!on_thread()||retired.load(std::memory_order_acquire)||!actor||actor!=guest.actor||!relationships(guest,true))return false;
-        const auto position=game.position(guest.actor);
-        if(!valid_position(position)||retired.load(std::memory_order_acquire)||
+        read_outputs(result);
+        if(!result.valid||!result.ready||retired.load(std::memory_order_acquire)||
             owned_actor.load(std::memory_order_acquire)!=actor||!relationships(guest,true))return false;
-        result.valid=result.ready=true;result.position={position[0],position[1],position[2]};return true;
+        return true;
     }catch(...){return false;}
 }
 bool guarded_terminal_position(NativePlayerState& result) noexcept {
@@ -687,7 +683,7 @@ void native_command_step(void* creator) {
     }
     if(owned_actor.load()&&last_world_at&&now-last_world_at>250){
         neutralize();neutral_at=0;
-        if(scenario)fault(StopReason::world_gap);
+        if(commands_armed.load())fault(StopReason::world_gap);
     }
     last_world_at=now;
     if(aborted.load()){neutralize();fail_demo(Error::input_owner);publish_native_commands();return;}
@@ -695,7 +691,7 @@ void native_command_step(void* creator) {
     const bool focused=foreground==GetCurrentProcessId();
     if(owned_actor.load()&&!focused){
         neutralize();neutral_at=0;
-        if(scenario){fault(StopReason::focus_lost);fail_demo(Error::input_owner);}return;
+        if(commands_armed.load()){fault(StopReason::focus_lost);fail_demo(Error::input_owner);}return;
     }
     if(demo.phase==Phase::failed||demo.phase==Phase::stopped){neutralize();return;}
     game.creator=creator;
@@ -717,7 +713,7 @@ void native_command_step(void* creator) {
     if(!scenario&&primary!=PlayerInput{}){neutral_at=0;return;}
     if(!neutral_at)neutral_at=now;
     if(!scenario&&now-neutral_at<500)return;
-    if(!scenario){negative_at=now;scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);commands_armed=true;}
+    if(!scenario){negative_at=now;scenario.emplace(generation,now);}
     ControllerScenarioObservation observation;
     if(!guarded_observe(observation.guest)){fault();neutralize();return;}
     observation.ownership_verified=true;observation.action_output_bound=action_output_bound;
@@ -734,6 +730,7 @@ void native_command_step(void* creator) {
     observation.other_driver_commands=locomotion_writes; // Legacy driver must stay off.
     trace_native_command_state(now,consumed,&observation.guest);
     const auto output=scenario->tick(now,observation);
+    commands_armed=output.command.has_value()&&!terminal(scenario->report().phase);
     if(output.neutralize)adapter.neutralize_guest();
     if(output.command){
         if(receiver.observe(command_scope,*output.command,now)!=CommandReceive::accepted){fault(StopReason::receiver_rejected);neutralize();return;}
@@ -746,7 +743,7 @@ void native_command_step(void* creator) {
         negative_passed=true;++generation;command_scope.input_generation=generation;
         if(!mailbox.reset_generation(generation)){fault(StopReason::mailbox_error);neutralize();return;}
         receiver=PlayerCommandReceiver{supported};
-        scenario.emplace(generation,now,ControllerScenarioMode::diagnostic_unbound);
+        scenario.emplace(generation,now);
         provider_disabled=false;
     }
     publish_native_commands();

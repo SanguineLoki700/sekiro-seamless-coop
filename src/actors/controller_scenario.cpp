@@ -31,9 +31,9 @@ std::uint64_t duration(Phase phase)noexcept{
     case Phase::moving:return 800;
     case Phase::movement_release:return 500;
     case Phase::attack_press:return 200;
-    case Phase::attack_release:return 1000;
-    case Phase::guard_hold:return 2000;
-    case Phase::guard_release:return 500;
+    case Phase::attack_release:return 2500;
+    case Phase::guard_hold:return 3000;
+    case Phase::guard_release:return 1200;
     case Phase::final_neutral:return 300;
     default:return 0;
     }
@@ -214,7 +214,7 @@ ControllerScenarioStep ControllerScenario::tick(std::uint64_t now,const Controll
     if(fresh){sample_=o.sample_sequence;sample_at_=o.observed_ms;}
     if(now-progress_at_>consumer_timeout_ms||(!phase_consumed_&&now-phase_at_>consumer_timeout_ms))return fail(Fault::consumer_timeout);
     const auto elapsed=now-phase_at_;
-    if(output_assertions_bound(o)&&report_.phase==Phase::guard_hold&&!guard_seen_&&elapsed>consumer_timeout_ms)return fail(Fault::guard_missing);
+    if(output_assertions_bound(o)&&report_.phase==Phase::guard_hold&&!guard_seen_&&elapsed>action_start_timeout_ms)return fail(Fault::guard_missing);
     if(elapsed<duration(report_.phase))return emit(now);
     if(!fresh)return emit(now); // A repeated/mutable sample cannot finish a stage.
     if(!phase_consumed_)return fail(Fault::consumer_timeout);
@@ -229,7 +229,7 @@ ControllerScenarioStep ControllerScenario::tick(std::uint64_t now,const Controll
     case Phase::attack_release:
         if(output_assertions_bound(o)){
             if(!report_.attack_observed)return fail(Fault::attack_missing);
-            if(o.guest.attacking)return fail(Fault::attack_not_released);
+            if(o.guest.attacking||!o.guest.action_idle)return fail(Fault::attack_not_released);
         }
         enter(Phase::guard_hold,now);break;
     case Phase::guard_hold:
@@ -239,9 +239,10 @@ ControllerScenarioStep ControllerScenario::tick(std::uint64_t now,const Controll
         }
         enter(Phase::guard_release,now);break;
     case Phase::guard_release:
-        if(output_assertions_bound(o)&&(!report_.guard_released||o.guest.guarding))return fail(Fault::guard_not_released);
+        if(output_assertions_bound(o)&&(!report_.guard_released||o.guest.guarding||!o.guest.action_idle))return fail(Fault::guard_not_released);
         enter(Phase::final_neutral,now);break;
     case Phase::final_neutral:
+        if(output_assertions_bound(o)&&!o.guest.action_idle)return fail(Fault::not_neutral);
         if(mode_==ControllerScenarioMode::diagnostic_unbound){report_.phase=Phase::inconclusive;report_.fault=Fault::action_result_unbound;}
         else report_.phase=Phase::complete;
         return {};

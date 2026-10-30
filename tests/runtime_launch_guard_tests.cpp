@@ -294,7 +294,8 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
     if (mutation == Mutation::trace_position) trace.position_mm[2] = -1;
     if (mutation == Mutation::trace_resolved) trace.resolved_milli[2] = 1;
     if (mutation == Mutation::trace_held) trace.held_mask = 1;
-    if (mutation == Mutation::trace_flags) trace.observation_flags = native_trace_tail_complete;
+    if (mutation == Mutation::trace_flags) trace.observation_flags = native_trace_tail_complete|native_trace_action_bound|
+        native_trace_attacking|native_trace_guarding|native_trace_action_idle;
     auto& failed_input=status->native_controller_failed_input;
     if(mutation==Mutation::failed_input_epoch)failed_input.epoch=1;
     if(mutation==Mutation::failed_input_flags)failed_input.flags=16; // Unknown flags also refuse startup.

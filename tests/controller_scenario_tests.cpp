@@ -21,17 +21,18 @@ struct FakeRun {
     ControllerScenarioObservation observation;
     std::optional<PlayerCommand> pending;
     PlayerInput applied;
-    std::uint64_t now{1000},attack_until{},guard_since{},releases{};
+    std::uint64_t now{1000},attack_until{},guard_since{},guard_exit_until{},releases{},guard_entry_ms{};
     std::array<bool,13> visited{};
     float movement_roundtrip_error{};
     float intensity_error{};
     Motion motion{Motion::normal};
-    bool provider{true},movement{true},attack{true},guard{true},guard_break{},guard_stuck{},writeback_only{};
+    bool provider{true},movement{true},attack{true},guard{true},guard_break{},guard_stuck{},writeback_only{},recovery_missing{};
     explicit FakeRun(Mode mode=Mode::strict,bool output_bound=true):scenario(19,1000,mode){
         observation.guest.valid=observation.guest.ready=observation.ownership_verified=true;
         observation.lifetime=7;observation.pose_setter_calls=1;
         observation.held_state_observed=true;
         observation.action_output_bound=output_bound;
+        observation.guest.action_idle=true;
         observation.guest.position={10,0,10};observation.primary_position={10,0,12};
         observation.sample_sequence=1;observation.observed_ms=now;
         const auto first=scenario.tick(now,observation);
@@ -52,7 +53,8 @@ struct FakeRun {
                 observation.resolved_input.movement.intensity+=intensity_error;
             }
             const bool press=(command.input.held&button_mask(CommandButton::attack))&&!(applied.held&button_mask(CommandButton::attack));
-            if(press&&attack)attack_until=now+400;
+            if(press&&attack)attack_until=now+1700;
+            if((applied.held&button_mask(CommandButton::guard))&&!(command.input.held&button_mask(CommandButton::guard)))guard_exit_until=now+700;
             applied=command.input;
             if(movement){
                 const auto amount=applied.movement.intensity*static_cast<float>(dt)*.002f;
@@ -67,10 +69,12 @@ struct FakeRun {
             }
             const bool held=(applied.held&button_mask(CommandButton::guard))!=0;
             if(held&&!guard_since)guard_since=now;
-            observation.guest.guarding=guard&&held&&!(guard_break&&now-guard_since>600);
+            observation.guest.guarding=guard&&held&&now-guard_since>=guard_entry_ms&&!(guard_break&&now-guard_since>600);
             if(guard_stuck&&guard_since)observation.guest.guarding=true;
         }else observation.consumer_observed=false;
         observation.guest.attacking=attack_until>now;
+        observation.guest.action_idle=!observation.guest.attacking&&!observation.guest.guarding&&guard_exit_until<=now&&
+            !(applied.held&button_mask(CommandButton::guard))&&!recovery_missing;
         ++observation.sample_sequence;observation.observed_ms=now;
     }
     ControllerScenarioStep apply(){
@@ -102,6 +106,8 @@ void complete_trace(){
     root_motion.observation.guest.position[2]+=1.86f;root_motion.apply();root_motion.finish();
     CHECK(root_motion.scenario.report().assertions_satisfied());
     CHECK(root_motion.scenario.report().displacement<1.f); // Walk evidence is separate from subsequent native attack root motion.
+    FakeRun entry;entry.guard_entry_ms=500;entry.finish();
+    CHECK(entry.scenario.report().assertions_satisfied()&&entry.scenario.report().guard_held_ms>=1500);
 }
 void diagnostic_output_binding(){
     CHECK(!ControllerScenarioObservation{}.action_output_bound);
@@ -158,7 +164,7 @@ void required_outcomes(){
     {FakeRun run;run.guard_stuck=true;run.finish();run.failed(Fault::guard_not_released);}
     {FakeRun run;run.observation.held_state_observed=false;run.finish();run.failed(Fault::invalid_consumption);}
     {FakeRun run;run.until(Phase::guard_hold);
-     for(unsigned i=0;i<60&&!terminal(run.scenario.report().phase)&&run.scenario.report().phase==Phase::guard_hold;++i){
+     for(unsigned i=0;i<90&&!terminal(run.scenario.report().phase)&&run.scenario.report().phase==Phase::guard_hold;++i){
          run.tick(50);if(terminal(run.scenario.report().phase))break;
          // At 90 ms the old native sample remains fresh enough to keep the
          // test alive, but that observation gap must not earn guard duration.
@@ -167,6 +173,9 @@ void required_outcomes(){
      if(!terminal(run.scenario.report().phase))run.finish();
      run.failed(Fault::guard_not_held);CHECK(run.scenario.report().guard_held_ms<1500);}
     {FakeRun run;run.until(Phase::attack_release);run.attack_until=run.now+10000;run.finish();run.failed(Fault::attack_not_released);}
+    {FakeRun run;run.until(Phase::attack_release);run.recovery_missing=true;run.finish();run.failed(Fault::attack_not_released);}
+    {FakeRun run;run.until(Phase::guard_release);run.recovery_missing=true;run.finish();run.failed(Fault::guard_not_released);}
+    {FakeRun run;run.guard_entry_ms=1100;run.finish();run.failed(Fault::guard_missing);}
     {FakeRun run;run.until(Phase::movement_release);run.observe();run.observation.guest.position[2]+=.3f;run.apply();
      // Establish a neutral sample, then reveal continued uncommanded motion.
      if(!terminal(run.scenario.report().phase)){run.observe();run.observation.guest.position[2]+=.3f;run.apply();run.finish();}

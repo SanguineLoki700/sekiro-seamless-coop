@@ -68,7 +68,8 @@ struct ControllerScenarioStep {
 class ControllerScenario {
 public:
     static constexpr std::uint64_t preparation_timeout_ms=30000,max_run_ms=10000,
-        sample_expiry_ms=100,max_tick_gap_ms=250,consumer_timeout_ms=250;
+        sample_expiry_ms=100,max_tick_gap_ms=250,consumer_timeout_ms=250,
+        action_start_timeout_ms=1000; // Animation entry differs from input freshness.
     static constexpr float movement_input_tolerance=1e-4f;
     static constexpr float max_displacement=4.f;
     explicit ControllerScenario(std::uint64_t input_generation,std::uint64_t start_ms,
