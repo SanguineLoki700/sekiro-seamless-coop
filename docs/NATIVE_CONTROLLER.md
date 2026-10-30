@@ -8,8 +8,8 @@ O lançador, assistente, instalação de teste, perfis `.co2`, backups, DLL, ide
 
 | Etapa | Condição para avançar | Situação |
 |---|---|---|
-| 1. Caminho nativo completo | Entrada, consumidor, proprietário e fase demonstrados no ator adicional. | Entrada e consumidores identificados; ramo restrito do resolver observado com comandos neutros. Consumo completo de movimento e ações ainda pendente. |
-| 2. Prova automática em um PC | Comandos independentes, consumo downstream, deslocamento físico, controles mantidos/liberados e teste negativo. | Rodadas automáticas executadas: controle negativo rejeitado, entrada neutra consumida; sequência positiva interrompida no início da caminhada. |
+| 1. Caminho nativo completo | Entrada, consumidor, proprietário e fase demonstrados no ator adicional. | Entrada, consumidores de movimento/botões e solicitações de ação do próprio motor observados no convidado. Classificação dos resultados de ataque/defesa ainda pendente. |
+| 2. Prova automática em um PC | Comandos independentes, consumo downstream, deslocamento físico, controles mantidos/liberados e teste negativo. | Sequência diagnóstica completa: 118 comandos, 115 consumidos, avanço de 0,451 m e parada. Resultado inconclusivo por falta de classificação das ações efetivas. |
 | 3. LAN existente | Mesmo adaptador alimentado pelo TCP atual; comandos com formato explicitamente versionado e proteção de sessão. | Pendente da prova do controlador. A LAN anterior continua usando o caminho legado. |
 | 4. Combate compartilhado | Ataque, contato, defesa, dano e postura; anfitrião confirma consequências. | Pendente. A primeira entrega jogável continua sendo uma luta em dupla contra o mesmo inimigo. |
 | 5. Ampliar e otimizar | Famílias de ações, habilidades, chefes, medições de rede, Steam, quatro jogadores e continuidade. | Pendente. Testes em um PC não substituem dois jogos ou quatro máquinas. |
@@ -19,6 +19,8 @@ O progresso permanece em **10%**. Código, ferramentas, testes simulados ou um r
 A oitava rodada consumiu comandos móveis e registrou 0,666 m de avanço na direção comandada, com uma criação e apenas o posicionamento inicial. A sequência parou na verificação da parada, antes de ataque e defesa. A nona interrompeu antes da parada, por diferença de intensidade entre 0,35 e 0,349454; o código histórico não distingue em qual estágio ela surgiu. Esses resultados parciais não concluem o controlador nem alteram os pontos.
 
 Na décima rodada, o diagnóstico distinguiu a falha no vetor lido pelo resolver. A terceira atualização de caminhada começou 109 ms após a primeira, além do prazo cumulativo antigo de 100 ms. A janela ainda estava aberta e nenhum movimento divergente recebeu crédito. Esse resultado motivou separar o prazo de alinhamento da validade de cada observação; não demonstra que a sequência positiva esteja concluída.
+
+Em 30/10/2026, a execução de `6516fb6` chegou ao fim do diagnóstico: consumo de caminhada, parada, ataque, defesa mantida e solturas, com controle negativo rejeitado, uma criação e um posicionamento inicial. Não houve erro de entrada, operações legadas ou escritas manuais no grafo. A verificação registrou 0,451 m de avanço e posição estável na janela de liberação. O resultado permanece **inconclusivo**, pois os estados que comprovam ataque e defesa efetivos continuam sem classificação. Uma pesquisa separada com controles virtuais também observou o próprio motor solicitar ataque, soltura, entrada e saída da defesa; ela não substitui a aceitação do adaptador C++.
 
 ## Contratos e controle
 
@@ -71,7 +73,7 @@ A criação e o verificador continuam na rotina de mundo já observada. A entrad
 
 O assistente acrescenta **Testar controlador nativo neste PC**, reutilizando a preparação e os saves separados. A sequência cria uma vez, posiciona uma vez, aguarda estabilização e testa entrada neutra, caminhada, parada, ataque, soltura, defesa mantida e soltura. O limite total é 4 m; a caminhada exige avanço próprio no plano comandado e a parada tem verificação separada. Nenhuma correção posterior de posição, escrita manual no grafo ou enfileiramento manual HKB é permitido.
 
-Antes da sequência positiva, o fornecimento de comandos é deliberadamente desligado. O cenário precisa rejeitar esse caso por ausência de consumo. Um resultado negativo diferente interrompe o teste. Esse controle negativo já foi observado nas rodadas recentes; a sequência positiva completa continua pendente.
+Antes da sequência positiva, o fornecimento de comandos é deliberadamente desligado. O cenário precisa rejeitar esse caso por ausência de consumo. Um resultado negativo diferente interrompe o teste. Esse controle negativo já foi observado. A sequência positiva diagnóstica chegou ao fim; a aceitação estrita continua pendente da classificação dos resultados reais de ação.
 
 Há duas modalidades explícitas do verificador:
 
@@ -80,6 +82,6 @@ Há duas modalidades explícitas do verificador:
 
 O candidato usa a segunda modalidade porque os códigos que comprovam ataque e defesa efetivos ainda não estão classificados. Nível de botão, tempo de controle mantido ou estado escrito pelo provedor não são usados para inventar esse resultado. O registro contém transições de estado por atualização em uma lista limitada e publicada atomicamente, preservando mudanças curtas entre leituras mais lentas da interface. Ausência, overflow, erro ou timeout impede aceitação.
 
-Depois que um neutro da fase atual estabelece a origem da parada, toda amostra física fresca participa da deriva máxima, inclusive durante uma lacuna de observação do consumidor. Uma excursão seguida de retorno não desaparece do registro. Essa correção conserva o limite de 0,15 m, a duração de 500 ms, a distância tridimensional e a exigência de consumo nativo para estabelecer a origem; não resolve nem aprova a parada observada no jogo.
+Depois que um neutro da fase atual estabelece a origem da parada, toda amostra física fresca participa da deriva máxima, inclusive durante uma lacuna de observação do consumidor. Uma excursão seguida de retorno não desaparece do registro. A execução de 30/10 passou essa verificação sem alterar o limite de 0,15 m, a duração de 500 ms, a distância tridimensional ou a exigência de consumo nativo para estabelecer a origem. As seis amostras retidas da liberação, ao longo de 469 ms, ficaram na mesma posição; a cauda física posterior terminou coerente e também estável.
 
 Veja os [resultados e limites da pesquisa](validation/native-controller-research-2026-10-28.md). O pacote público anterior não foi substituído por esta implementação.
