@@ -12,7 +12,7 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=14;
+inline constexpr std::uint32_t protocol_version=15;
 enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
@@ -67,6 +67,20 @@ struct alignas(8) NativeMovementDiagnostic {
     volatile LONG after_pad_milli[4],at_consumer_milli[4],after_resolver_milli[4];
     volatile LONG speed_milli,angle_milli;
     volatile LONG64 pad_epoch,consumer_epoch,resolver_epoch;
+};
+// A retained sample from the failed mailbox epoch. Flags describe availability
+// and native turn observations only; this diagnostic supplies no acceptance.
+inline constexpr LONG native_failed_input_pad_valid=1,native_failed_input_original_turn_observed=2,
+    native_failed_input_turn_matched=4,native_failed_input_consumer_valid=8;
+inline constexpr LONG native_failed_input_known_flags=native_failed_input_pad_valid|
+    native_failed_input_original_turn_observed|native_failed_input_turn_matched|native_failed_input_consumer_valid;
+struct alignas(8) NativeFailedInputDiagnostic {
+    volatile LONG64 epoch;
+    volatile LONG flags,padding;
+    // Actual raw float4 lanes [x,y,z,w] in 1e-6 units, never normalized input.
+    // pad_valid supplies intent and after_pad together; consumer_valid is
+    // independent. Epoch is published last, before the mailbox failure kind.
+    volatile LONG intent_micro[4],after_pad_micro[4],at_consumer_micro[4];
 };
 struct alignas(8) SharedStatus {
     std::uint32_t struct_size;
@@ -154,6 +168,7 @@ struct alignas(8) SharedStatus {
     NativeControllerTrace native_controller_trace[native_trace_capacity];
     NativeMailboxDiagnostic native_controller_mailbox;
     NativeMovementDiagnostic native_controller_movement;
+    NativeFailedInputDiagnostic native_controller_failed_input;
     std::uint64_t reserved[8];
 };
 static_assert(sizeof(void*)==8 && sizeof(wchar_t)==2);
@@ -163,5 +178,11 @@ static_assert(offsetof(SharedStatus,hooks_mask)%8==0);
 static_assert(offsetof(SharedStatus,action_captured)%8==0 && offsetof(SharedStatus,action_unsupported_source)%8==0);
 static_assert(offsetof(SharedStatus,action_attack_captured)%8==0);
 static_assert(sizeof(NativeControllerTrace)==64 && alignof(NativeControllerTrace)==8);
+static_assert(sizeof(NativeFailedInputDiagnostic)==64 && alignof(NativeFailedInputDiagnostic)==8);
+static_assert(std::is_standard_layout_v<NativeFailedInputDiagnostic> && std::is_trivially_copyable_v<NativeFailedInputDiagnostic>);
+static_assert(offsetof(NativeFailedInputDiagnostic,epoch)==0 && offsetof(NativeFailedInputDiagnostic,flags)==8 &&
+    offsetof(NativeFailedInputDiagnostic,padding)==12 && offsetof(NativeFailedInputDiagnostic,intent_micro)==16 &&
+    offsetof(NativeFailedInputDiagnostic,after_pad_micro)==32 && offsetof(NativeFailedInputDiagnostic,at_consumer_micro)==48);
+static_assert(offsetof(SharedStatus,native_controller_failed_input)%8==0);
 static_assert(sizeof(Payload)<65536);
 } // namespace skcoop::launch

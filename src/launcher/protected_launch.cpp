@@ -3,6 +3,7 @@
 #include "file_open_error.h"
 #include "absent_save.h"
 #include "receipt_budget.h"
+#include "native_failed_input_json.h"
 #include "launch_settings.h"
 #include "steam_install.h"
 #include "launcher_process.h"
@@ -371,14 +372,16 @@ std::string counters(const SharedStatus& s) {
         value<<'}';}
     value<<"],\"mailbox_failure\":";
     const auto& diagnostic=s.native_controller_mailbox;const auto kind=load(diagnostic.kind);
+    const auto failure_epoch=load(diagnostic.epoch);
     if(!kind)value<<"null";
     else {
-        value<<"{\"kind\":"<<kind<<",\"latch_fault\":"<<load(diagnostic.latch_fault)<<",\"epoch\":"<<load(diagnostic.epoch)
+        value<<"{\"kind\":"<<kind<<",\"latch_fault\":"<<load(diagnostic.latch_fault)<<",\"epoch\":"<<failure_epoch
             <<",\"button_mask\":"<<load(diagnostic.button)<<",\"expected_held\":"<<load(diagnostic.expected_held)
             <<",\"observed_held\":"<<load(diagnostic.observed_held)<<",\"held_ms\":"<<load(diagnostic.held_ms)
             <<",\"expected_move_micro\":["<<load(diagnostic.expected_move_micro[0])<<','<<load(diagnostic.expected_move_micro[1])<<','<<load(diagnostic.expected_move_micro[2])
             <<"],\"observed_move_micro\":["<<load(diagnostic.observed_move_micro[0])<<','<<load(diagnostic.observed_move_micro[1])<<','<<load(diagnostic.observed_move_micro[2])<<"]}";
     }
+    value<<",\"failed_input_sample\":"<<native_failed_input_json(kind,failure_epoch,s.native_controller_failed_input);
     const auto& movement=s.native_controller_movement;
     const auto pad_epoch=load(movement.pad_epoch),consumer_epoch=load(movement.consumer_epoch),resolver_epoch=load(movement.resolver_epoch);
     const auto vector=[&](const volatile LONG* data){value<<'[';for(unsigned i=0;i<4;++i){if(i)value<<',';value<<load(data[i]);}value<<']';};

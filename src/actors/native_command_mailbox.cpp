@@ -128,7 +128,7 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
         const bool steering_policy=movement_onset_==NativeMovementOnset::defer_verified_steering;
         const bool first_zero=onset_frame_&&resolved==MovementIntent{}&&(!steering_policy||steering_window_open_);
         const bool verified_onset=steering_policy&&steering_window_open_&&steering_updates_>=1&&steering_updates_<=3&&
-            now>=steering_onset_at_&&now-steering_onset_at_<=observation_expiry_ms&&turn_intent_verified_;
+            now>=steering_onset_at_&&now-steering_onset_at_<=steering_onset_timeout_ms&&turn_intent_verified_;
         if(first_zero||verified_onset){
             resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
         }

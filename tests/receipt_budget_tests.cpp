@@ -1,4 +1,5 @@
 #include "receipt_budget.h"
+#include "native_failed_input_json.h"
 #include "../include/skcoop/launch_protocol.h"
 #include <iostream>
 #include <limits>
@@ -24,10 +25,35 @@ std::string conservative_native_trace_record() {
             <<",\"observation_flags\":"<<narrow<<",\"position_mm\":"<<triple
             <<",\"resolved_input\":{\"movement_milli\":"<<triple<<",\"held\":"<<narrow<<"}}";
     }
-    record<<"]}}";return record.str();
+    const auto quadruple='['+narrow+','+narrow+','+narrow+','+narrow+']';
+    record<<"],\"failed_input_sample\":{\"epoch\":"<<wide<<",\"flags\":"<<narrow
+        <<",\"intent_micro\":"<<quadruple<<",\"after_pad_micro\":"<<quadruple
+        <<",\"at_consumer_micro\":"<<quadruple<<"}}}";return record.str();
+}
+void failed_input_availability() {
+    using namespace skcoop::launch;
+    NativeFailedInputDiagnostic sample{};sample.epoch=17;
+    sample.intent_micro[0]=1;sample.intent_micro[1]=-2;sample.intent_micro[2]=350000;sample.intent_micro[3]=4;
+    sample.after_pad_micro[2]=-350000;
+    const auto render=[&](LONG kind=15,LONG64 epoch=17){return skcoop::launcher::native_failed_input_json(kind,epoch,sample);};
+    require(render(0)=="null"&&render(15,16)=="null");
+    sample.flags=native_failed_input_pad_valid|native_failed_input_original_turn_observed|native_failed_input_turn_matched;
+    const auto pad=render();
+    require(pad.find("\"intent_micro\":[1,-2,350000,4]")!=std::string::npos&&
+        pad.find("\"after_pad_micro\":[0,0,-350000,0]")!=std::string::npos&&
+        pad.find("\"at_consumer_micro\":null")!=std::string::npos);
+    // A separately observed zero consumer is valid; missing Pad data stays null.
+    sample.flags=native_failed_input_consumer_valid;
+    const auto consumer=render();
+    require(consumer.find("\"intent_micro\":null")!=std::string::npos&&consumer.find("\"after_pad_micro\":null")!=std::string::npos&&
+        consumer.find("\"at_consumer_micro\":[0,0,0,0]")!=std::string::npos);
+    sample.flags=native_failed_input_known_flags|16;require(render()=="null");
+    sample.flags=native_failed_input_known_flags;sample.padding=1;require(render()=="null");
+    sample.padding=0;sample.epoch=0;require(render()=="null");
 }
 int main() {
     try {
+        failed_input_availability();
         ReceiptBudget budget;
         const auto full_trace=conservative_native_trace_record();
         require(skcoop::launch::native_trace_capacity==128);

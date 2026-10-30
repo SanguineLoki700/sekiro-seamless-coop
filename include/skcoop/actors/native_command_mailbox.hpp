@@ -44,7 +44,7 @@ enum class NativeMovementOnset {
     defer_first_zero,
     // Exact native binding only: with a matching native steering observation
     // in the same completed epoch, a valid divergent physical direction may
-    // remain uncredited for the first three moving updates and at most100ms.
+    // remain uncredited for the first three moving updates and at most 250ms.
     // Correct physical movement is still required for consumption. Association
     // changes never rearm this window; only a real neutral begin_update does.
     defer_verified_steering
@@ -58,6 +58,9 @@ class NativeCommandMailbox {
 public:
     using Clock=std::uint64_t(*)()noexcept;
     static constexpr std::uint64_t observation_expiry_ms=100;
+    // Cumulative native steering onset, aligned with the scenario's consumer
+    // timeout. This never extends the 100ms freshness of an individual epoch.
+    static constexpr std::uint64_t steering_onset_timeout_ms=250;
     NativeCommandMailbox(std::uint64_t input_generation,Clock,
                          NativeMovementOnset=NativeMovementOnset::strict);
     NativeInputOffer offer(const CommandDelivery&);

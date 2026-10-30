@@ -1,4 +1,5 @@
 #include "skcoop/actors/native_command_mailbox.hpp"
+#include "skcoop/actors/controller_scenario.hpp"
 #include "skcoop/actors/native_input_match.hpp"
 #include <atomic>
 #include <barrier>
@@ -17,6 +18,9 @@ static_assert(static_cast<int>(NativeMailboxFault::invalid_turn_intent)==12&&
     static_cast<int>(NativeMailboxFault::turn_intent_mismatch)==13&&
     static_cast<int>(NativeMailboxFault::invalid_resolver_movement)==14&&
     static_cast<int>(NativeMailboxFault::resolver_movement_mismatch)==15);
+static_assert(NativeCommandMailbox::observation_expiry_ms==100&&
+    NativeCommandMailbox::steering_onset_timeout_ms==250&&
+    NativeCommandMailbox::steering_onset_timeout_ms==ControllerScenario::consumer_timeout_ms);
 namespace {
 void check(bool yes,int line){if(!yes)throw std::runtime_error("Native command mailbox invariant at line "+std::to_string(line));}
 #define require(value) check((value),__LINE__)
@@ -428,16 +432,14 @@ void verified_native_steering_onset(){
     require(!stale_ignored.observe_turn_intent(old_epoch.epoch,opposite,true)&&!stale_ignored.failed());
     require(!stale_ignored.observe_resolver(frame.epoch,opposite,true,true,true)&&!stale_ignored.failed()&&!stale_ignored.consumed());
 
-    ticks=0;NativeCommandMailbox timeout(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(timeout);
-    require(!timeout.observe_resolver(frame.epoch,{},true,true,true));
-    frame=next(timeout,101);require(timeout.observe_turn_intent(frame.epoch,movement,true));
-    require(!timeout.observe_resolver(frame.epoch,opposite,true,true,true)&&!timeout.failed()); // Exactly100ms.
-    frame=next(timeout,102);require(timeout.observe_turn_intent(frame.epoch,movement,true));
-    require(!timeout.observe_resolver(frame.epoch,opposite,true,true,true)&&timeout.failed());
+    // Per-epoch freshness remains 100ms even though cumulative native steering
+    // has its own 250ms bound. Neither late proof nor late physical input counts.
     ticks=0;NativeCommandMailbox stale(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(stale);
+    require(stale.observe_turn_intent(frame.epoch,movement,true));
     ticks=102;require(!stale.observe_turn_intent(frame.epoch,movement,true)&&!stale.failed());
+    require(!stale.observe_resolver(frame.epoch,opposite,true,true,true)&&!stale.failed()&&!stale.consumed());
     frame=next(stale,102);require(stale.observe_turn_intent(frame.epoch,movement,true));
-    require(!stale.observe_resolver(frame.epoch,opposite,true,true,true)&&stale.failed());
+    require(!stale.observe_resolver(frame.epoch,opposite,true,true,true)&&!stale.failed()&&!stale.consumed());
 
     for(unsigned association=0;association<4;++association){
         ticks=0;NativeCommandMailbox unchanged(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(unchanged);
@@ -452,25 +454,81 @@ void verified_native_steering_onset(){
         require(unchanged.observe_turn_intent(frame.epoch,movement,true));
         require(!unchanged.observe_resolver(frame.epoch,opposite,true,true,true)&&unchanged.failed());
     }
-    // An association reset cannot renew the original100ms deadline either.
-    ticks=0;NativeCommandMailbox old_window(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(old_window);
-    require(!old_window.observe_resolver(frame.epoch,{},true,true,true));old_window.suspend();ticks=102;
-    auto restart=baseline(7,3);restart.state.input.movement=movement;require(old_window.offer(restart)==NativeInputOffer::accepted);frame=next(old_window,102);
-    require(old_window.observe_turn_intent(frame.epoch,movement,true));require(!old_window.observe_resolver(frame.epoch,opposite,true,true,true)&&old_window.failed());
+    // Baseline/suspend/new generation without a neutral native update cannot
+    // renew the original 250ms deadline, even with only one moving update used.
+    for(unsigned reset=0;reset<3;++reset){
+        ticks=0;NativeCommandMailbox old_window(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(old_window);
+        require(!old_window.observe_resolver(frame.epoch,{},true,true,true));
+        if(reset==1)old_window.suspend();
+        if(reset==2)require(old_window.reset_generation(8));
+        ticks=252;auto restart=baseline(reset==2?8:7,reset==2?1:3);restart.state.input.movement=movement;
+        require(old_window.offer(restart)==NativeInputOffer::accepted);frame=next(old_window,252);
+        require(old_window.observe_turn_intent(frame.epoch,movement,true));
+        require(!old_window.observe_resolver(frame.epoch,opposite,true,true,true)&&old_window.failed()&&!old_window.consumed());
+        require(old_window.failure().kind==NativeMailboxFault::resolver_movement_mismatch);
+    }
 
+    // An actual neutral Pad update rearms the onset after the old deadline.
     ticks=0;NativeCommandMailbox rearmed(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(rearmed);
     require(evidence(rearmed,frame)&&rearmed.consumed());rearmed.suspend();
-    frame=next(rearmed,2);require(frame.input==PlayerInput{}&&!frame.source&&evidence(rearmed,frame));
-    ticks=3;restart=baseline(7,3);restart.state.input.movement=movement;require(rearmed.offer(restart)==NativeInputOffer::accepted);frame=next(rearmed,3);
+    frame=next(rearmed,502);require(frame.input==PlayerInput{}&&!frame.source&&evidence(rearmed,frame));
+    ticks=503;auto restart=baseline(7,3);restart.state.input.movement=movement;require(rearmed.offer(restart)==NativeInputOffer::accepted);frame=next(rearmed,503);
     require(!rearmed.observe_resolver(frame.epoch,{},true,true,true)&&!rearmed.failed());
-    frame=next(rearmed,4);require(rearmed.observe_turn_intent(frame.epoch,movement,true));require(!rearmed.observe_resolver(frame.epoch,opposite,true,true,true)&&!rearmed.failed());
-    frame=next(rearmed,5);require(evidence(rearmed,frame)&&rearmed.consumed());
+    frame=next(rearmed,504);require(rearmed.observe_turn_intent(frame.epoch,movement,true));require(!rearmed.observe_resolver(frame.epoch,opposite,true,true,true)&&!rearmed.failed());
+    frame=next(rearmed,505);require(evidence(rearmed,frame)&&rearmed.consumed());
     // Once the physical onset has matched, later divergence is not a transient.
-    frame=next(rearmed,6);require(rearmed.observe_turn_intent(frame.epoch,movement,true));require(!rearmed.observe_resolver(frame.epoch,opposite,true,true,true)&&rearmed.failed());
+    frame=next(rearmed,506);require(rearmed.observe_turn_intent(frame.epoch,movement,true));require(!rearmed.observe_resolver(frame.epoch,opposite,true,true,true)&&rearmed.failed());
     for(const auto policy:{NativeMovementOnset::strict,NativeMovementOnset::defer_first_zero}){
         ticks=0;NativeCommandMailbox existing(7,&clock_read,policy);frame=prepare(existing);
         require(existing.observe_turn_intent(frame.epoch,movement,true));require(!existing.observe_resolver(frame.epoch,opposite,true,true,true)&&existing.failed());
     }
+}
+void steering_onset_timing(){
+    const MovementIntent movement{{0,1},.35f},opposite{{0,-1},.35f};
+    const auto prepare=[&](NativeCommandMailbox& box){
+        require(ticks==0&&box.offer(baseline())==NativeInputOffer::accepted);
+        auto frame=begin(box);require(box.finish_update(frame.epoch)&&evidence(box,frame));
+        ticks=1;auto moving=command(7,2);moving.state.input.movement=movement;
+        require(box.offer(moving)==NativeInputOffer::accepted);return begin(box);
+    };
+    const auto complete=[&](NativeCommandMailbox& box,const NativeInputFrame& frame){
+        require(box.finish_update(frame.epoch,NativeTurnIntent{movement,true}));
+        require(box.observe_held(frame.epoch,CommandButton::attack,0)&&box.observe_held(frame.epoch,CommandButton::guard,0));
+    };
+    // Approximately 20FPS: moving updates at relative 0/55/110ms remain
+    // uncredited with fresh native proof. Update 4 at 165ms must physically match.
+    for(bool fourth_matches:{false,true}){
+        ticks=0;NativeCommandMailbox slow(7,&clock_read,NativeMovementOnset::defer_verified_steering);auto frame=prepare(slow);
+        for(unsigned update=0;update<3;++update){
+            if(update){ticks=1+55*update;frame=begin(slow);}
+            complete(slow,frame);
+            require(!slow.observe_resolver(frame.epoch,update?opposite:MovementIntent{},true,true,true));
+            require(!slow.failed()&&!slow.consumed());
+        }
+        ticks=166;frame=begin(slow);complete(slow,frame);
+        require(slow.observe_resolver(frame.epoch,fourth_matches?movement:opposite,true,true,true)==fourth_matches);
+        if(fourth_matches){
+            const auto consumed=slow.consumed();require(consumed&&consumed->epoch==frame.epoch&&consumed->input.movement==movement);
+        }else require(slow.failed()&&!slow.consumed()&&slow.failure().kind==NativeMailboxFault::resolver_movement_mismatch);
+    }
+    // The third completed epoch is fresh at both observations: the cumulative
+    // 250ms boundary defers without credit, but 251ms must fail in that same epoch.
+    ticks=0;NativeCommandMailbox boundary(7,&clock_read,NativeMovementOnset::defer_verified_steering);auto frame=prepare(boundary);
+    complete(boundary,frame);require(!boundary.observe_resolver(frame.epoch,{},true,true,true)&&!boundary.failed());
+    ticks=56;frame=begin(boundary);complete(boundary,frame);
+    require(!boundary.observe_resolver(frame.epoch,opposite,true,true,true)&&!boundary.failed());
+    ticks=251;frame=begin(boundary);complete(boundary,frame);
+    require(!boundary.observe_resolver(frame.epoch,opposite,true,true,true)&&!boundary.failed()&&!boundary.consumed());
+    ticks=252;require(!boundary.observe_resolver(frame.epoch,opposite,true,true,true)&&boundary.failed()&&!boundary.consumed());
+    require(boundary.failure().kind==NativeMailboxFault::resolver_movement_mismatch&&boundary.failure().epoch==frame.epoch);
+
+    // The larger cumulative cap never carries proof from an expired epoch to
+    // a fresh update. A 101ms-old proof/observation is rejected without credit.
+    ticks=0;NativeCommandMailbox stale(7,&clock_read,NativeMovementOnset::defer_verified_steering);frame=prepare(stale);complete(stale,frame);
+    require(!stale.observe_resolver(frame.epoch,{},true,true,true));
+    ticks=102;require(!stale.observe_turn_intent(frame.epoch,movement,true)&&!stale.observe_resolver(frame.epoch,opposite,true,true,true));
+    require(!stale.failed()&&!stale.consumed());frame=begin(stale);require(stale.finish_update(frame.epoch));
+    require(!stale.observe_resolver(frame.epoch,opposite,true,true,true)&&stale.failed()&&!stale.consumed());
 }
 void atomic_completion_and_turn_proof(){
     const MovementIntent movement{{0,1},.35f},opposite{{0,-1},.35f};
@@ -521,6 +579,6 @@ void atomic_completion_and_turn_proof(){
     }
 }
 }
-int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();native_movement_numerical_bounds();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();failure_origin_diagnostics();native_previous_stick_filter();verified_native_steering_onset();atomic_completion_and_turn_proof();
+int main(){try{completion_and_required_evidence();freshness_and_late_callbacks();suspend_reset_overlap_and_abandon();actual_observed_values();native_movement_numerical_bounds();invalid_observation_and_ingress();pulse_identity_and_duplicates();concurrent_ingress_updates_and_observers();failure_diagnostics();failure_origin_diagnostics();native_previous_stick_filter();verified_native_steering_onset();steering_onset_timing();atomic_completion_and_turn_proof();
     std::cout<<"PASS portable native command mailbox, threaded ingress/update/observer epochs, actual-evidence requirements, stale/reset/pause guards and no native binding claim\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

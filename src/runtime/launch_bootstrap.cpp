@@ -148,6 +148,10 @@ bool valid_initial_status() noexcept {
         load(movement.pad_epoch)||load(movement.consumer_epoch)||load(movement.resolver_epoch))return false;
     for(unsigned i=0;i<2;++i)if(load(movement.axes_milli[i]))return false;
     for(unsigned i=0;i<4;++i)if(load(movement.after_pad_milli[i])||load(movement.at_consumer_milli[i])||load(movement.after_resolver_milli[i]))return false;
+    const auto& failed_input=shared->native_controller_failed_input;
+    if(load(failed_input.epoch)||load(failed_input.flags)||load(failed_input.padding))return false;
+    for(unsigned i=0;i<4;++i)
+        if(load(failed_input.intent_micro[i])||load(failed_input.after_pad_micro[i])||load(failed_input.at_consumer_micro[i]))return false;
     return true;
 }
 

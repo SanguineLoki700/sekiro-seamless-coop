@@ -30,6 +30,11 @@ std::mutex primary_lock;
 struct MovementProbe {std::uint64_t epoch{};unsigned flags{},axis_mask{};float yaw{},speed{},angle{};
     std::array<float,2> axes{};Vector after_pad{},at_consumer{},after_resolver{};};
 MovementProbe movement_probe; // First moving native update only, protected by primary_lock.
+// Preserve raw native lanes independently of PlayerCommand. A matching failed
+// epoch can be diagnosed even after the mailbox has neutralized its state.
+// These samples provide no consumption credit and contain no game pointers.
+struct FailedInputProbe {std::uint64_t epoch{};unsigned flags{};Vector intent{},after_pad{},at_consumer{};};
+std::array<FailedInputProbe,8> failed_input_probes; // Protected by primary_lock.
 PlayerInput primary_input;
 PlayerCommandCapture primary_capture{1,supported};
 std::uint64_t primary_at{};
@@ -305,10 +310,14 @@ void pad_after(PadScope& scope) noexcept {
         if(!scope.usable)return;
         if(scope.guest){
             if(scope.frame.accepted){
+                if(!relationships(guest,true)||retired.load(std::memory_order_acquire)||
+                   scope.controller!=owned_controller.load(std::memory_order_acquire))throw InputFailure{Error::input_owner};
+                const auto desired=read<Vector>(scope.controller+0xc0);
+                const auto after_pad=read<Vector>(scope.controller+0x10);
+                if(!relationships(guest,true)||retired.load(std::memory_order_acquire)||
+                   scope.controller!=owned_controller.load(std::memory_order_acquire))throw InputFailure{Error::input_owner};
                 std::optional<NativeTurnIntent> turn_proof;
                 if(scope.turn_seen&&scope.frame.input.movement.intensity>0){
-                    if(!relationships(guest,true))throw InputFailure{Error::input_owner};
-                    const auto desired=read<Vector>(scope.controller+0xc0);
                     if(!valid_position(desired)||std::abs(desired[1])>.0001f||std::abs(desired[3])>.0001f)
                         throw InputFailure{Error::input_value};
                     const auto intensity=std::hypot(desired[0],desired[2]);
@@ -321,6 +330,13 @@ void pad_after(PadScope& scope) noexcept {
                             std::abs(std::remainder(scope.turn_target[1]-yaw,2*std::numbers::pi_v<float>))<=.0001f;
                         turn_proof=NativeTurnIntent{intent,turn_matches};
                     }
+                }
+                // Store before completion becomes visible to the behavior
+                // worker. Calls into the engine remain outside this lock.
+                {std::lock_guard lock(primary_lock);
+                    auto& probe=failed_input_probes[scope.frame.epoch%failed_input_probes.size()];
+                    probe={scope.frame.epoch,1u|(scope.turn_seen?2u:0u)|
+                        (turn_proof&&turn_proof->native_turn_observed?4u:0u),desired,after_pad,{}};
                 }
                 // Collect native values outside the mailbox lock; publish the
                 // completed epoch and its turn proof atomically. A behavior
@@ -443,6 +459,8 @@ void capture_consumer_input(ParameterScope& scope,Token controller) noexcept {
         scope.input_read=true;
         std::lock_guard lock(primary_lock);
         if(movement_probe.epoch==scope.epoch&&!(movement_probe.flags&2)){movement_probe.at_consumer=direction;movement_probe.flags|=2;}
+        auto& probe=failed_input_probes[scope.epoch%failed_input_probes.size()];
+        if(probe.epoch==scope.epoch&&!(probe.flags&8)){probe.at_consumer=direction;probe.flags|=8;}
     }catch(...){fault();}
 }
 void guarded_consumer_input(ParameterScope& scope,Token controller) noexcept {
@@ -536,6 +554,22 @@ void publish_native_commands() noexcept {
     if(!InterlockedCompareExchange(&diagnostic.kind,0,0))try {
         const auto failure=mailbox.failure();
         if(failure.kind!=NativeMailboxFault::none){
+            auto& input=status->native_controller_failed_input;
+            if(!InterlockedCompareExchange64(&input.epoch,0,0)){
+                FailedInputProbe probe;
+                {std::lock_guard lock(primary_lock);probe=failed_input_probes[failure.epoch%failed_input_probes.size()];}
+                if(probe.epoch==failure.epoch&&(probe.flags&1)){
+                    for(unsigned i=0;i<4;++i){
+                        InterlockedExchange(&input.intent_micro[i],metric_micro(probe.intent[i]));
+                        InterlockedExchange(&input.after_pad_micro[i],metric_micro(probe.after_pad[i]));
+                        InterlockedExchange(&input.at_consumer_micro[i],(probe.flags&8)?metric_micro(probe.at_consumer[i]):0);
+                    }
+                    InterlockedExchange(&input.flags,static_cast<LONG>(probe.flags));
+                    // The immutable diagnostic epoch is published before the
+                    // failure kind. Unavailable stages remain explicitly absent.
+                    InterlockedExchange64(&input.epoch,static_cast<LONG64>(probe.epoch));
+                }
+            }
             InterlockedExchange(&diagnostic.latch_fault,static_cast<LONG>(failure.latch_fault));
             InterlockedExchange(&diagnostic.button,static_cast<LONG>(failure.button));
             InterlockedExchange(&diagnostic.expected_held,static_cast<LONG>(failure.expected.held));
