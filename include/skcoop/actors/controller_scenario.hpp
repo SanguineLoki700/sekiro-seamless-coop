@@ -67,9 +67,12 @@ struct ControllerScenarioStep {
 };
 class ControllerScenario {
 public:
-    static constexpr std::uint64_t preparation_timeout_ms=30000,max_run_ms=10000,
+    static constexpr std::uint64_t preparation_timeout_ms=30000,max_run_ms=12000,
         sample_expiry_ms=100,max_tick_gap_ms=250,consumer_timeout_ms=250,
-        action_start_timeout_ms=1000; // Animation entry differs from input freshness.
+        action_start_timeout_ms=1000,movement_settle_timeout_ms=2000,movement_stable_ms=250;
+    // Neutral input can precede the native stop transition. Bound that entire
+    // coast, then require actual idle and a separate small 3D stable envelope.
+    static constexpr float movement_coast_limit=.4f,movement_idle_drift_limit=.05f;
     static constexpr float movement_input_tolerance=1e-4f;
     static constexpr float max_displacement=4.f;
     explicit ControllerScenario(std::uint64_t input_generation,std::uint64_t start_ms,
@@ -84,9 +87,9 @@ private:
     ControllerScenarioReport report_;
     std::array<IssuedRange,9> issued_{};
     std::uint64_t generation_{},start_{},checked_{},active_at_{},phase_at_{},phase_first_{},
-        sample_{},sample_at_{},lifetime_{},last_issued_{},last_consumed_{},progress_at_{},guard_last_{};
-    std::array<float,3> primary_origin_{},guest_origin_{},movement_origin_{},movement_stop_origin_{};
-    bool stop_requested_{},phase_consumed_{},guard_seen_{},guard_consecutive_{},stop_origin_set_{};
+        sample_{},sample_at_{},lifetime_{},last_issued_{},last_consumed_{},progress_at_{},guard_last_{},stop_idle_at_{};
+    std::array<float,3> primary_origin_{},guest_origin_{},movement_origin_{},movement_stop_origin_{},stop_idle_origin_{};
+    bool stop_requested_{},phase_consumed_{},guard_seen_{},guard_consecutive_{},stop_origin_set_{},stop_idle_set_{};
     float stop_drift_{};
     ControllerScenarioStep fail(ControllerScenarioFault)noexcept;
     ControllerScenarioStep emit(std::uint64_t)noexcept;

@@ -1,4 +1,5 @@
 #include "skcoop/actors/controller_scenario.hpp"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -184,10 +185,39 @@ void required_outcomes(){
      // The first valid neutral consumer establishes the anchor. Physical
      // samples remain authoritative during a brief consumer-observation gap.
      const auto anchor=run.observation.guest.position;
-     run.observe();run.observation.consumer_observed=false;run.observation.guest.position[2]+=.3f;run.apply();
+     run.observe();run.observation.consumer_observed=false;run.observation.guest.position[2]+=.41f;run.apply();
      run.observe();run.observation.consumer_observed=false;run.observation.guest.position=anchor;run.apply();
-     run.tick();CHECK(run.observation.consumer_observed&&!terminal(run.scenario.report().phase));
+     run.tick();CHECK(run.observation.consumer_observed);
      run.finish();run.failed(Fault::movement_not_released);}
+}
+void native_stop_settling(){
+    // Native neutral consumption is immediate, but a simulated native stopping
+    // transition takes 1.2 s and coasts 0.3 m before entering idle. The old
+    // 500 ms envelope would reject it; actual idle and stability must now follow.
+    {FakeRun run;run.until(Phase::movement_release);run.tick();const auto anchor=run.observation.guest.position;
+     for(unsigned i=0;i<24;++i){run.observe();const auto fraction=std::min(1.f,static_cast<float>(i+1)/23.f);
+         run.observation.guest.position[2]=anchor[2]+.3f*fraction;
+         run.observation.guest.position[1]=anchor[1]-.015f*fraction;
+         run.observation.guest.action_idle=i>=22;run.apply();
+         CHECK(run.scenario.report().phase==Phase::movement_release);}
+     run.finish();CHECK(run.scenario.report().assertions_satisfied());}
+    // A stationary actor without real idle must not advance after the deadline.
+    {FakeRun run;run.until(Phase::movement_release);
+     for(unsigned i=0;i<45&&!terminal(run.scenario.report().phase);++i){run.observe();run.observation.guest.action_idle=false;run.apply();}
+     run.failed(Fault::movement_not_released);}
+    // Crossing the whole coasting envelope fails even before idle begins.
+    {FakeRun run;run.until(Phase::movement_release);run.tick();run.observe();
+     run.observation.guest.action_idle=false;run.observation.guest.position[2]+=.41f;run.apply();run.failed(Fault::movement_not_released);}
+    // Native idle with continuing horizontal OR vertical drift also fails.
+    for(unsigned axis:{1u,2u}){FakeRun run;run.until(Phase::movement_release);run.tick();run.observe();
+        run.observation.guest.position[axis]+=.06f;run.apply();run.failed(Fault::movement_not_released);}
+    // Intermittent idle/consumer evidence cannot accumulate a stable window.
+    {FakeRun run;run.until(Phase::movement_release);
+     for(unsigned i=0;i<45&&!terminal(run.scenario.report().phase);++i){run.observe();run.observation.guest.action_idle=i%3!=0;run.apply();}
+     run.failed(Fault::movement_not_released);}
+    {FakeRun run;run.until(Phase::movement_release);
+     for(unsigned i=0;i<45&&!terminal(run.scenario.report().phase);++i){run.observe();run.observation.consumer_observed=i%3!=0;run.apply();}
+     run.failed(Fault::movement_not_released);}
 }
 void invariant_mutations(){
     for(unsigned mutation=0;mutation<5;++mutation){FakeRun run;run.observe();
@@ -228,6 +258,6 @@ void clock_and_consumption_mutations(){
     {FakeRun run;run.scenario.request_stop();run.tick();CHECK(run.scenario.report().phase==Phase::stopped&&run.releases==1&&!run.scenario.report().assertions_satisfied());}
 }
 }
-int main(){try{complete_trace();diagnostic_output_binding();independent_movement_roundtrip();required_outcomes();invariant_mutations();clock_and_consumption_mutations();
+int main(){try{complete_trace();diagnostic_output_binding();independent_movement_roundtrip();required_outcomes();native_stop_settling();invariant_mutations();clock_and_consumption_mutations();
     std::cout<<"PASS offline controller scenario/oracle, bounded independent commands and deliberate failure mutations; no native game binding tested\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

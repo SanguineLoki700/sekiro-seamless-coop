@@ -142,14 +142,14 @@ bool ControllerScenario::check_invariants(std::uint64_t now,const ControllerScen
     return true;
 }
 bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScenarioObservation& o,bool fresh)noexcept{
-    if(!fresh){guard_consecutive_=false;return true;}
+    if(!fresh){guard_consecutive_=false;stop_idle_set_=false;return true;}
     ++report_.observations;
     // Once native neutral consumption establishes the stop anchor, every
     // fresh physical sample belongs to the envelope. A missing consumer
     // observation cannot hide an excursion that later returns to the anchor.
     if(report_.phase==Phase::movement_release&&stop_origin_set_)
         stop_drift_=std::max(stop_drift_,distance(o.guest.position,movement_stop_origin_));
-    if(!o.consumer_observed){guard_consecutive_=false;return true;}
+    if(!o.consumer_observed){guard_consecutive_=false;stop_idle_set_=false;return true;}
     const auto sequence=o.guest.consumed_frame_sequence;
     if(o.guest.consumed_input_generation!=generation_||!sequence||sequence>last_issued_||sequence<last_consumed_||!valid(o.resolved_input)){
         fail(Fault::invalid_consumption);return false;
@@ -157,7 +157,7 @@ bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScen
     const auto range=std::find_if(issued_.begin(),issued_.end(),[&](const auto& issued){return issued.first&&sequence>=issued.first&&sequence<=issued.last;});
     if(range==issued_.end()||!resolved_input_matches(range->input,o.resolved_input)){fail(Fault::invalid_consumption);return false;}
     if(sequence>last_consumed_){last_consumed_=sequence;progress_at_=now;++report_.consumed_commands;}
-    if(!phase_first_||sequence<phase_first_){guard_consecutive_=false;return true;}
+    if(!phase_first_||sequence<phase_first_){guard_consecutive_=false;stop_idle_set_=false;return true;}
     phase_consumed_=true;
     const auto phase=report_.phase;
     if((phase==Phase::guard_hold||phase==Phase::guard_release)&&!o.held_state_observed){fail(Fault::invalid_consumption);return false;}
@@ -171,6 +171,14 @@ bool ControllerScenario::observe_consumer(std::uint64_t now,const ControllerScen
     }
     if(phase==Phase::movement_release){
         if(!stop_origin_set_){movement_stop_origin_=o.guest.position;stop_origin_set_=true;}
+        if(output_assertions_bound(o)){
+            if(stop_drift_>movement_coast_limit){fail(Fault::movement_not_released);return false;}
+            if(!o.guest.action_idle)stop_idle_set_=false;
+            else if(!stop_idle_set_){stop_idle_set_=true;stop_idle_at_=o.observed_ms;stop_idle_origin_=o.guest.position;}
+            else if(distance(o.guest.position,stop_idle_origin_)>movement_idle_drift_limit){
+                fail(Fault::movement_not_released);return false;
+            }
+        }
     }
     // Input consumption and physical motion above remain mandatory. Once any
     // classification sample was unbound, this diagnostic cannot retrospectively
@@ -218,12 +226,20 @@ ControllerScenarioStep ControllerScenario::tick(std::uint64_t now,const Controll
     if(elapsed<duration(report_.phase))return emit(now);
     if(!fresh)return emit(now); // A repeated/mutable sample cannot finish a stage.
     if(!phase_consumed_)return fail(Fault::consumer_timeout);
+    if(report_.phase==Phase::movement_release&&output_assertions_bound(o)){
+        const bool stable=stop_idle_set_&&o.guest.action_idle&&o.observed_ms-stop_idle_at_>=movement_stable_ms;
+        if(!stable){
+            if(elapsed>=movement_settle_timeout_ms)return fail(Fault::movement_not_released);
+            return emit(now);
+        }
+        if(elapsed>movement_settle_timeout_ms)return fail(Fault::movement_not_released);
+    }
     switch(report_.phase){
     case Phase::neutral:movement_origin_=o.guest.position;enter(Phase::moving,now);break;
     case Phase::moving:enter(Phase::movement_release,now);break;
     case Phase::movement_release:
         if(report_.displacement<.15f)return fail(Fault::movement_missing);
-        if(!stop_origin_set_||stop_drift_>.15f)return fail(Fault::movement_not_released);
+        if(!stop_origin_set_||stop_drift_>(output_assertions_bound(o)?movement_coast_limit:.15f))return fail(Fault::movement_not_released);
         enter(Phase::attack_press,now);break;
     case Phase::attack_press:enter(Phase::attack_release,now);break;
     case Phase::attack_release:

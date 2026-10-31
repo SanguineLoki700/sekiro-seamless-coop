@@ -40,6 +40,7 @@ def package(binary_dir: Path, output: Path) -> None:
         },
         "native_two_game_action_acceptance": False,
         "native_controller_trial": {
+            "criteria_revision": 2,
             "local_only": True,
             "automatic_independent_commands": True,
             "input_backend_verified_in_game": False,
