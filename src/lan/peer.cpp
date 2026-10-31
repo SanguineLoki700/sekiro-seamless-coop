@@ -2,9 +2,11 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include "skcoop/lan/peer.hpp"
+#include <deque>
 #include <atomic>
 #include <algorithm>
 #include <mutex>
+#include <limits>
 #include <thread>
 #include <stdexcept>
 namespace skcoop::lan {
@@ -17,13 +19,57 @@ sockaddr_in address(std::string_view ip,std::uint16_t port){sockaddr_in a{};a.si
 void nonblocking(SOCKET s){u_long enabled=1;check(ioctlsocket(s,FIONBIO,&enabled)==0);BOOL yes=TRUE;check(setsockopt(s,IPPROTO_TCP,TCP_NODELAY,reinterpret_cast<const char*>(&yes),sizeof(yes))==0);}
 std::uint16_t bound_port(SOCKET s){sockaddr_in a{};int n=sizeof(a);check(getsockname(s,reinterpret_cast<sockaddr*>(&a),&n)==0);return ntohs(a.sin_port);}
 }
+ActionFramePush ActionFrameBuffer::fail(ActionFault fault)noexcept{
+ fault_=fault;count_=0;return ActionFramePush::failed;
+}
+ActionFramePush ActionFrameBuffer::push(const ActionFrame& frame)noexcept{
+ if(fault_!=ActionFault::none)return ActionFramePush::failed;
+ if(!valid(frame.scope)||!valid(frame.history)||frame.scope.epoch!=frame.history.epoch||!frame.packet_sequence)
+  return fail(ActionFault::invalid);
+ if(frame.arrival_ms>std::numeric_limits<std::uint64_t>::max()-action_delay_ms)return fail(ActionFault::clock_regressed);
+ bool changed=frame.history.latest>0,expired=false;
+ if(latest_){
+  const auto& old=*latest_;
+  if(frame.scope!=old.scope)return fail(ActionFault::scope_changed);
+  if(frame.packet_sequence<=old.packet_sequence)return ActionFramePush::stale;
+  if(frame.arrival_ms<old.arrival_ms||frame.history.source_ms<old.history.source_ms)return fail(ActionFault::clock_regressed);
+  if(frame.history.latest<old.history.latest)return fail(ActionFault::invalid);
+  for(std::size_t i=0;i<old.history.count;++i)for(std::size_t j=0;j<frame.history.count;++j)
+   if(old.history.events[i].serial==frame.history.events[j].serial&&old.history.events[i]!=frame.history.events[j])return fail(ActionFault::invalid);
+  if(!consistent_guard(old.history,frame.history))return fail(ActionFault::invalid);
+  expired=frame.arrival_ms-old.arrival_ms>action_frame_expiry_ms;
+  changed=frame.history.latest>old.history.latest;
+  if(changed&&frame.history.events[0].serial>old.history.latest+1&&!expired)return fail(ActionFault::gap);
+ }
+ if(expired){
+  if(baseline_generation_==std::numeric_limits<std::uint64_t>::max())return fail(ActionFault::serial_exhausted);
+  ++baseline_generation_;count_=0;pending_.fill({});
+ }
+ if(changed){if(count_==pending_.size())return fail(ActionFault::overflow);pending_[count_++]=frame;}
+ latest_=frame;return ActionFramePush::accepted;
+}
+bool ActionFrameBuffer::acknowledge(std::uint64_t sequence)noexcept{
+ if(fault_!=ActionFault::none)return false;
+ if(!latest_||!sequence||sequence>latest_->packet_sequence){fail(ActionFault::invalid);return false;}
+ if(sequence<=acknowledged_)return true;
+ std::size_t removed{};while(removed<count_&&pending_[removed].packet_sequence<=sequence)++removed;
+ if(removed){std::move(pending_.begin()+static_cast<std::ptrdiff_t>(removed),pending_.begin()+static_cast<std::ptrdiff_t>(count_),pending_.begin());
+  const auto before=count_;count_-=removed;std::fill(pending_.begin()+static_cast<std::ptrdiff_t>(count_),pending_.begin()+static_cast<std::ptrdiff_t>(before),ActionFrame{});}
+ acknowledged_=sequence;return true;
+}
 struct Peer::Impl {
  SessionConfig config;std::string bind;std::atomic<bool> stop_requested{};std::thread thread;
  mutable std::mutex mutex;View published;std::optional<Motion> local;std::uint64_t local_at{};
+ struct OfferedCommand {actors::PlayerCommand command;bool enabled{};std::uint64_t at{};};
+ std::deque<OfferedCommand> outgoing_commands;
+ std::deque<ReceivedCommand> incoming_commands;
+ bool command_following{};
+ std::optional<ReceivedCommand> latest_command;
+ std::optional<actors::PlayerCommand> last_local_command;
  Impl(SessionConfig c,std::string b):config(std::move(c)),bind(std::move(b)){if(!config.participant)config.participant=random_participant();published.status.participant=config.participant;}
  void run()noexcept {
   Status status;status.participant=config.participant;MotionBuffer buffer;
-  const auto update=[&]{std::lock_guard lock(mutex);published={status,buffer};};
+  const auto update=[&]{std::lock_guard lock(mutex);status.action_fault=published.actions.fault();if(status.action_fault!=ActionFault::none){status.failure=Failure::protocol;status.state=State::failed;}published.status=status;published.remote=buffer;return status.state!=State::failed;};
   try {
    Wsa wsa;Socket listener,socket;Session session(config);const auto started=GetTickCount64();
    if(config.role==Role::host){
@@ -56,6 +102,12 @@ struct Peer::Impl {
      std::optional<Motion> offered;std::uint64_t offered_at{};{std::lock_guard lock(mutex);offered=local;offered_at=local_at;}
      if(offered&&now>=offered_at&&now-offered_at<=500&&now>=next_frame){session.send_frame(*offered);next_frame=now+50;next_heartbeat=now+250;}
      else if(now>=next_heartbeat){session.heartbeat();next_heartbeat=now+250;}
+     std::optional<OfferedCommand> command;
+     {std::lock_guard lock(mutex);if(!outgoing_commands.empty()){command=outgoing_commands.front();outgoing_commands.pop_front();}}
+     if(command){
+      if(now<command->at||now-command->at>actors::command_expiry_ms)throw std::runtime_error("Expired unsent command queue");
+      session.send_command(command->command,command->enabled);
+     }
      for(const auto& p:session.take_outgoing())enqueue(p);
     }
     fd_set read,write,errors;FD_ZERO(&read);FD_ZERO(&write);FD_ZERO(&errors);FD_SET(socket.value,&read);FD_SET(socket.value,&errors);if(!tx.empty())FD_SET(socket.value,&write);
@@ -79,14 +131,30 @@ struct Peer::Impl {
      rx.erase(rx.begin(),rx.begin()+static_cast<std::ptrdiff_t>(size+2));
      if(!decoded){++status.rejected;status.failure=decoded.error==Error::authentication?Failure::authentication:Failure::protocol;status.state=State::failed;break;}
      ++status.received;const auto& p=*decoded.packet;
-     if(!session.receive(p,GetTickCount64()))++status.rejected;
-     if(const auto motion=session.take_remote()){
-      const auto result=buffer.push(*motion,GetTickCount64(),p.sequence);if(result==PushResult::scene_changed){status.state=State::failed;status.failure=Failure::scene;break;}
-      if(result==PushResult::accepted)++status.frames_received;
+     if(!session.receive(p,GetTickCount64())){++status.rejected;if(session.state()==State::failed){status.state=State::failed;status.failure=session.failure();break;}continue;}
+     if(const auto command=session.take_remote_command()){
+      std::lock_guard lock(mutex);
+      latest_command=*command;
+      if(command_following){
+       if(incoming_commands.size()==actors::command_queue_capacity)throw std::runtime_error("Incoming command queue full");
+       incoming_commands.push_back(*command);
+      }
+     }
+     if(const auto frame=session.take_remote_frame()){
+      const auto result=buffer.push(frame->motion,frame->arrival_ms,frame->packet_sequence);if(result==PushResult::scene_changed){status.state=State::failed;status.failure=Failure::scene;break;}
+      if(result==PushResult::invalid){status.state=State::failed;status.failure=Failure::protocol;break;}
+      if(result==PushResult::accepted){
+       ++status.frames_received;
+       if(frame->motion.actions.epoch){
+        std::lock_guard lock(mutex);const ActionFrame actions{frame->scope,frame->motion.actions,frame->packet_sequence,frame->arrival_ms};
+        if(published.actions.push(actions)==ActionFramePush::failed){status.state=State::failed;status.failure=Failure::protocol;status.action_fault=published.actions.fault();published.status=status;break;}
+        published.remote=buffer; // Publish each new action batch with its corresponding pose samples.
+       }
+      }
      }
     }
     if(status.state==State::failed)break;
-    status.state=session.state();status.failure=session.failure();status.peer=session.peer();update();
+    status.state=session.state();status.failure=session.failure();status.peer=session.peer();if(!update())break;
    }
    if(stop_requested)status.state=State::stopped;update();
   }catch(const SocketError& e){status.system_error=static_cast<std::uint32_t>(e.code);status.failure=Failure::socket;status.state=State::failed;update();}
@@ -97,8 +165,38 @@ Peer::Peer(SessionConfig c,std::string bind):impl_(std::make_unique<Impl>(std::m
 Peer::~Peer(){stop();}
 void Peer::request_stop()noexcept{impl_->stop_requested=true;}
 void Peer::stop(){request_stop();if(impl_->thread.joinable())impl_->thread.join();}
-bool Peer::try_offer(const Motion& m){if(!valid(m))return false;std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;impl_->local=m;impl_->local_at=GetTickCount64();return true;}
+bool Peer::try_offer(const Motion& m){if(!valid(impl_->config.build,m))return false;std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;impl_->local=m;impl_->local_at=GetTickCount64();return true;}
 bool Peer::try_read(View& v)const{std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;v=impl_->published;return true;}
+bool Peer::try_offer_command(const actors::PlayerCommand& c,bool enabled){
+ if(impl_->config.build.purpose!=Purpose::native_commands||!actors::valid(c,3))return false;
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);
+ if(!lock||impl_->outgoing_commands.size()==actors::command_queue_capacity)return false;
+ impl_->outgoing_commands.push_back({c,enabled,GetTickCount64()});impl_->last_local_command=c;return true;
+}
+bool Peer::try_set_command_following(bool enabled){
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;
+ if(impl_->command_following==enabled)return true;
+ impl_->command_following=enabled;impl_->incoming_commands.clear();
+ if(enabled){if(impl_->latest_command)impl_->incoming_commands.push_back(*impl_->latest_command);}
+ else{
+  // Explicit pause: discard old outgoing presses and send only a disabled
+  // baseline. Reusing its source sequence never refreshes a freshness lease.
+  impl_->outgoing_commands.clear();
+  if(impl_->last_local_command)impl_->outgoing_commands.push_back({*impl_->last_local_command,false,GetTickCount64()});
+ }
+ return true;
+}
+bool Peer::try_take_commands(std::array<ReceivedCommand,actors::command_queue_capacity>& out,std::size_t& count){
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);count=0;if(!lock)return false;
+ for(const auto& c:impl_->incoming_commands)out[count++]=c;
+ impl_->incoming_commands.clear();return true;
+}
+bool Peer::try_ack_actions(std::uint64_t sequence){
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;
+ const bool ok=impl_->published.actions.acknowledge(sequence);
+ if(!ok){impl_->published.status.action_fault=impl_->published.actions.fault();impl_->published.status.failure=Failure::protocol;impl_->published.status.state=State::failed;}
+ return ok;
+}
 View Peer::read()const{std::lock_guard lock(impl_->mutex);return impl_->published;}
 std::vector<std::string> local_addresses(){
  Wsa wsa;ULONG size=16384;std::vector<std::uint8_t> bytes(size);auto* list=reinterpret_cast<IP_ADAPTER_ADDRESSES*>(bytes.data());

@@ -10,7 +10,7 @@ O modo `lan_profile=independent` prepara um perfil persistente em `SeamlessCoop/
 
 A Steam continua fornecendo a conta ativa e o jogo original continua responsavel pela autenticacao. O lancador recusa uma configuracao de outra conta. A [documentacao oficial](https://partner.steamgames.com/doc/api/steam_api) distingue a inicializacao no cliente e o AppID legitimo. O projeto usa apenas o AppID814380 e DLLs originais, sem substituicoes ou alteracoes de DRM.
 
-O bootstrap privado passa a **10**. O envelope LAN permanece `SKL1/v1`; o novo modo usa adaptador de movimento **2**. Seu hash de cenario representa uma declaracao de teste controlado na mesma area, nao o conteudo do save e nao um ID nativo de mapa. Assim, contas diferentes nao precisam de saves byte a byte iguais. O modo antigo de fixture identica permanece separado pelo adaptador e sua negociacao; um par incompativel e recusado. O codec de campanha v2 nao mudou.
+O candidato atual usa bootstrap privado **12**, envelope LAN `SKL1/v3` e adaptador nativo **4**. Ambos os computadores precisam atualizar o pacote completo. Seu hash de cenario representa uma declaracao de teste controlado na mesma area, nao o conteudo do save e nao um ID nativo de mapa. Assim, contas diferentes nao precisam de saves byte a byte iguais. O modo antigo de fixture identica permanece separado pelo adaptador e sua negociacao; um par incompativel e recusado. O codec de campanha v2 nao mudou. O caminho de ações está em [ACTION_TEST.md](ACTION_TEST.md). [Ataques e defesa](COMBAT_PREVIEW.md) ficam em um teste local separado, restrito a este PC; Criar/Entrar continuam com movimento.
 
 ## Descoberta local
 

@@ -215,8 +215,11 @@ void load_from_main(const fs::path& executable, const fs::path& runtime, const T
     require(fs::is_regular_file(tree.marker()), "Controlled executable TLS did not record successful startup.");
 }
 
-enum class Mutation { missing, truncated, size, version, pid, host, zero_nonce, nonce_mismatch,
-    reserved, status_reserved, actor_mode, actor_padding, actor_status, actor_metrics, identity, digest, pe, path };
+enum class Mutation { missing, truncated, size, version, previous_version, pid, host, zero_nonce, nonce_mismatch,
+    reserved, status_reserved, actor_mode, actor_padding, actor_status, actor_metrics,
+    trace_position, trace_resolved, trace_held, trace_flags, previous_status_version, previous_status_size,
+    failed_input_epoch,failed_input_flags,failed_input_padding,failed_input_intent,failed_input_pad,failed_input_consumer,
+    identity, digest, pe, path };
 void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation mutation) {
     tree.clear_marker();
     Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedStatus), nullptr));
@@ -272,6 +275,9 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
     // test bypass and no payload combines all supported identity fields.
     if (mutation == Mutation::size) --payload.struct_size;
     if (mutation == Mutation::version) ++payload.version;
+    if (mutation == Mutation::previous_version) --payload.version;
+    if (mutation == Mutation::previous_status_version) --status->version;
+    if (mutation == Mutation::previous_status_size) status->struct_size-=sizeof(NativeFailedInputDiagnostic);
     if (mutation == Mutation::pid) ++payload.child_pid;
     if (mutation == Mutation::host) payload.host_pid = 0;
     if (mutation == Mutation::zero_nonce) std::memset(payload.nonce, 0, sizeof(payload.nonce));
@@ -282,6 +288,21 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
     if (mutation == Mutation::actor_padding) payload.actor_padding = 1;
     if (mutation == Mutation::actor_status) status->actor_ticks = 1;
     if (mutation == Mutation::actor_metrics) status->actor_factory_us = 1;
+    // Even unused slots and data without a validity flag must start empty.
+    // Put each independent mutation at the tail to verify the complete array.
+    auto& trace = status->native_controller_trace[native_trace_capacity-1];
+    if (mutation == Mutation::trace_position) trace.position_mm[2] = -1;
+    if (mutation == Mutation::trace_resolved) trace.resolved_milli[2] = 1;
+    if (mutation == Mutation::trace_held) trace.held_mask = 1;
+    if (mutation == Mutation::trace_flags) trace.observation_flags = native_trace_tail_complete|native_trace_action_bound|
+        native_trace_attacking|native_trace_guarding|native_trace_action_idle;
+    auto& failed_input=status->native_controller_failed_input;
+    if(mutation==Mutation::failed_input_epoch)failed_input.epoch=1;
+    if(mutation==Mutation::failed_input_flags)failed_input.flags=16; // Unknown flags also refuse startup.
+    if(mutation==Mutation::failed_input_padding)failed_input.padding=1;
+    if(mutation==Mutation::failed_input_intent)failed_input.intent_micro[3]=-1;
+    if(mutation==Mutation::failed_input_pad)failed_input.after_pad_micro[3]=1;
+    if(mutation==Mutation::failed_input_consumer)failed_input.at_consumer_micro[3]=-1;
     if (mutation != Mutation::missing) {
         const DWORD count = static_cast<DWORD>(sizeof(payload) - (mutation == Mutation::truncated ? 1u : 0u));
         require(DetourCopyPayloadToProcess(process.process.get(), payload_guid, &payload, count) != FALSE,
@@ -295,6 +316,16 @@ void reject_before_startup(const fs::path& runtime, const Tree& tree, Mutation m
         "Rejected runtime launch reported an installed hook transaction.");
     require(InterlockedCompareExchange(&status->phase, 0, 0) != static_cast<LONG>(Phase::ready),
         "Rejected runtime launch reported READY.");
+    if (mutation == Mutation::trace_position || mutation == Mutation::trace_resolved ||
+        mutation == Mutation::trace_held || mutation == Mutation::trace_flags ||
+        mutation == Mutation::previous_status_version || mutation == Mutation::previous_status_size ||
+        mutation == Mutation::failed_input_epoch || mutation == Mutation::failed_input_flags ||
+        mutation == Mutation::failed_input_padding || mutation == Mutation::failed_input_intent ||
+        mutation == Mutation::failed_input_pad || mutation == Mutation::failed_input_consumer) {
+        require(InterlockedCompareExchange(&status->phase, 0, 0) == static_cast<LONG>(Phase::payload_prepared) &&
+            WaitForSingleObject(event.get(), 0) == WAIT_TIMEOUT,
+            "Dirty native trace reached identity/bootstrap instead of the initial status guard.");
+    }
     if (mutation == Mutation::identity || mutation == Mutation::digest ||
         mutation == Mutation::pe || mutation == Mutation::path) {
         require(WaitForSingleObject(event.get(), 0) == WAIT_OBJECT_0 &&
@@ -325,9 +356,12 @@ int wmain(int argc, wchar_t** argv) {
         load_from_main(own_executable(), runtime, tree, false);
         load_from_main(tree.renamed(), runtime, tree, true);
         unsigned passed = 2;
-        for (const auto mutation : {Mutation::missing, Mutation::truncated, Mutation::size, Mutation::version,
+        for (const auto mutation : {Mutation::missing, Mutation::truncated, Mutation::size, Mutation::version, Mutation::previous_version,
             Mutation::pid, Mutation::host, Mutation::zero_nonce, Mutation::nonce_mismatch, Mutation::reserved,
-            Mutation::status_reserved, Mutation::actor_mode, Mutation::actor_padding, Mutation::actor_status, Mutation::actor_metrics, Mutation::identity}) {
+            Mutation::status_reserved, Mutation::actor_mode, Mutation::actor_padding, Mutation::actor_status, Mutation::actor_metrics,
+            Mutation::previous_status_version,Mutation::previous_status_size,Mutation::failed_input_epoch,Mutation::failed_input_flags,
+            Mutation::failed_input_padding,Mutation::failed_input_intent,Mutation::failed_input_pad,Mutation::failed_input_consumer,
+            Mutation::trace_position, Mutation::trace_resolved, Mutation::trace_held, Mutation::trace_flags, Mutation::identity}) {
             reject_before_startup(runtime, tree, mutation);
             ++passed;
         }

@@ -87,6 +87,9 @@ bool identity() {
 LONG load(const volatile LONG& value) noexcept {
     return InterlockedCompareExchange(const_cast<volatile LONG*>(&value), 0, 0);
 }
+LONG64 load(const volatile LONG64& value) noexcept {
+    return InterlockedCompareExchange64(const_cast<volatile LONG64*>(&value),0,0);
+}
 
 bool valid_initial_status() noexcept {
     if (shared->struct_size != sizeof(*shared) || shared->version != protocol_version ||
@@ -95,7 +98,12 @@ bool valid_initial_status() noexcept {
         load(shared->phase) != static_cast<LONG>(Phase::payload_prepared) || load(shared->fatal_error) != 0 ||
         load(shared->actor_phase) || load(shared->actor_error) ||
         load(shared->actor_motion_paused) || load(shared->actor_metrics_padding) ||
-        load(shared->lan_state)||load(shared->lan_error)||load(shared->lan_wait)||load(shared->lan_system_error))
+        load(shared->lan_state)||load(shared->lan_error)||load(shared->lan_wait)||load(shared->lan_system_error)||
+        load(shared->action_error)||load(shared->action_sprinting)||load(shared->action_guarding)||load(shared->action_guard_rearm_required)||
+        load(shared->native_controller_phase)||load(shared->native_controller_fault)||
+        load(shared->native_controller_state_code)||load(shared->native_controller_output_bound)||
+        load(shared->native_controller_negative_passed)||load(shared->native_controller_trace_count)||
+        load(shared->native_controller_trace_overflow)||load(shared->native_controller_reason))
         return false;
     for (const auto value : shared->reserved) if (value != 0) return false;
     const volatile LONG64* const counters[]{
@@ -113,9 +121,37 @@ bool valid_initial_status() noexcept {
         &shared->actor_controller_callbacks, &shared->actor_controller_context_errors,
         &shared->actor_source_captures, &shared->actor_source_nonzero,
         &shared->actor_action_finalizes, &shared->actor_invalid_deltas, &shared->actor_observed_displacement_mm,
-        &shared->actor_graph_writes, &shared->actor_graph_nonzero,&shared->lan_frames_sent,&shared->lan_frames_received,&shared->lan_rejected,&shared->lan_stale_frames};
+        &shared->actor_graph_writes, &shared->actor_graph_nonzero,&shared->lan_frames_sent,&shared->lan_frames_received,&shared->lan_rejected,&shared->lan_stale_frames,
+        &shared->action_captured,&shared->action_replayed,&shared->action_discarded,&shared->action_released,
+        &shared->action_ignored_sources,&shared->action_unsupported_source,
+        &shared->action_jump_captured,&shared->action_step_captured,&shared->action_sprint_captured,
+        &shared->action_jump_replayed,&shared->action_step_replayed,&shared->action_sprint_replayed,
+        &shared->action_attack_captured,&shared->action_attack_replayed,&shared->action_guard_enter_captured,&shared->action_guard_exit_captured,
+        &shared->action_guard_enter_replayed,&shared->action_guard_exit_replayed,
+        &shared->native_controller_commands,&shared->native_controller_consumed,&shared->native_controller_guard_ms,
+        &shared->native_controller_displacement_mm,&shared->native_controller_manual_events,&shared->native_controller_primary_writes,
+        &shared->native_controller_input_queries,&shared->native_controller_resolvers,
+        &shared->native_controller_held_queries,&shared->native_controller_pressed_queries};
     for (const auto* value : counters)
         if (InterlockedCompareExchange64(const_cast<volatile LONG64*>(value), 0, 0) != 0) return false;
+    for(const auto& item:shared->native_controller_trace){
+        if(load(item.phase)||load(item.state_code)||load(item.input_generation)||load(item.frame_sequence)||
+            load(item.elapsed_ms)||load(item.held_mask)||load(item.observation_flags))return false;
+        for(unsigned i=0;i<3;++i)if(load(item.position_mm[i])||load(item.resolved_milli[i]))return false;
+    }
+    const auto& diagnostic=shared->native_controller_mailbox;
+    if(load(diagnostic.kind)||load(diagnostic.latch_fault)||load(diagnostic.button)||load(diagnostic.expected_held)||
+        load(diagnostic.observed_held)||load(diagnostic.held_ms)||load(diagnostic.epoch))return false;
+    for(unsigned i=0;i<3;++i)if(load(diagnostic.expected_move_micro[i])||load(diagnostic.observed_move_micro[i]))return false;
+    const auto& movement=shared->native_controller_movement;
+    if(load(movement.query_mask)||load(movement.yaw_milli)||load(movement.speed_milli)||load(movement.angle_milli)||
+        load(movement.pad_epoch)||load(movement.consumer_epoch)||load(movement.resolver_epoch))return false;
+    for(unsigned i=0;i<2;++i)if(load(movement.axes_milli[i]))return false;
+    for(unsigned i=0;i<4;++i)if(load(movement.after_pad_milli[i])||load(movement.at_consumer_milli[i])||load(movement.after_resolver_milli[i]))return false;
+    const auto& failed_input=shared->native_controller_failed_input;
+    if(load(failed_input.epoch)||load(failed_input.flags)||load(failed_input.padding))return false;
+    for(unsigned i=0;i<4;++i)
+        if(load(failed_input.intent_micro[i])||load(failed_input.after_pad_micro[i])||load(failed_input.at_consumer_micro[i]))return false;
     return true;
 }
 
@@ -140,7 +176,8 @@ bool initialize(const void* payload, DWORD bytes) {
         config.mapping_handle == config.ready_event) return false;
     if (config.actor_padding || (config.actor_test != ActorTest::off && config.actor_test != ActorTest::follow &&
         config.actor_test != ActorTest::locomotion && config.actor_test != ActorTest::pad_reference &&
-        config.actor_test != ActorTest::graph_locomotion && config.actor_test != ActorTest::lan)) return false;
+        config.actor_test != ActorTest::graph_locomotion && config.actor_test != ActorTest::lan &&
+        config.actor_test != ActorTest::native_commands && config.actor_test != ActorTest::lan_native_commands)) return false;
     if(!skcoop::actors::valid_lan_payload(config))return false;
     if (std::all_of(std::begin(config.nonce), std::end(config.nonce), [](std::uint8_t c) { return c == 0; }))
         return false;

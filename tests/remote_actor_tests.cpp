@@ -21,7 +21,14 @@ int main(){try{
  {skcoop::launch::Payload p{};require(valid_lan_payload(p));p.lan_role=1;require(!valid_lan_payload(p));p.actor_test=skcoop::launch::ActorTest::lan;require(!valid_lan_payload(p));
   p.scenario_sha256[0]=1;const auto code=skcoop::lan::ticket_text({"127.0.0.1",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});std::copy(code.begin(),code.end(),p.lan_ticket);require(valid_lan_payload(p));
   p.lan_profile=1;require(!valid_lan_payload(p));std::copy(skcoop::lan::independent_motion_scenario.begin(),skcoop::lan::independent_motion_scenario.end(),p.scenario_sha256);require(valid_lan_payload(p));
-  p.lan_profile=2;require(!valid_lan_payload(p));p.lan_profile=1;
+  p.lan_profile=2;require(!valid_lan_payload(p));
+  std::copy(skcoop::lan::local_combat_scenario.begin(),skcoop::lan::local_combat_scenario.end(),p.scenario_sha256);require(valid_lan_payload(p));
+  p.lan_role=2;require(!valid_lan_payload(p));p.lan_role=1;
+  const auto remote_code=skcoop::lan::ticket_text({"192.168.1.2",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});
+  std::fill(std::begin(p.lan_ticket),std::end(p.lan_ticket),char{});std::copy(remote_code.begin(),remote_code.end(),p.lan_ticket);require(!valid_lan_payload(p));
+  std::fill(std::begin(p.lan_ticket),std::end(p.lan_ticket),char{});std::copy(code.begin(),code.end(),p.lan_ticket);
+  p.lan_profile=3;require(!valid_lan_payload(p));p.lan_profile=1;
+  std::copy(skcoop::lan::independent_motion_scenario.begin(),skcoop::lan::independent_motion_scenario.end(),p.scenario_sha256);
   p.lan_ticket[159]='x';require(!valid_lan_payload(p));}
  {Fake g;RemoteActor d;g.tick(d,{},skcoop::lan::State::connected,300);require(g.creates==0&&g.writes==0&&g.local_commands==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connecting,300);require(g.creates==0);m.motion.position={0,0,0};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::separation);m.motion.position={0,0,30};g.tick(d,m);require(g.creates==0&&d.waiting==RemoteWait::area);}
@@ -31,6 +38,9 @@ int main(){try{
   m.fresh=true;g.tick(d,m);require(g.speed==.75f);g.tick(d,m,skcoop::lan::State::lost);require(d.phase==Phase::stopped&&g.speed==0);
   g.tick(d,m,skcoop::lan::State::connected,50);require(g.creates==1&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);const auto commands=g.remote_commands;++g.frame.primary;g.tick(d,m);require(d.phase==Phase::stopped&&g.remote_commands==commands);}
+ {Fake g;RemoteActor d;require(d.owned_actor(g.frame)==0);g.tick(d,remote(),skcoop::lan::State::connected,62);require(d.owned_actor(g.frame)==4);
+  auto f=g.frame;f.world++;require(!d.owned_actor(f));f=g.frame;f.primary++;require(!d.owned_actor(f));f=g.frame;f.registry++;require(!d.owned_actor(f));
+  f=g.frame;f.guest++;require(!d.owned_actor(f));f=g.frame;f.field_handle++;require(!d.owned_actor(f));f=g.frame;f.primary_ready=false;require(!d.owned_actor(f));}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);m.motion.epoch++;g.tick(d,m);require(d.phase==Phase::stopped&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m,skcoop::lan::State::connected,62);d.stop_requested=true;g.tick(d,m);require(d.phase==Phase::stopped&&g.speed==0);}
  {Fake g;RemoteActor d;auto m=remote();g.tick(d,m);m.motion.position[0]=100;g.tick(d,m);require(d.phase==Phase::failed&&g.writes==0);}

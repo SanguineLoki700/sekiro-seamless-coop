@@ -1,39 +1,54 @@
-SEKIRO CO-OP - ASSISTENTE DE TESTE LAN
+SEKIRO CO-OP - TESTE LAN COM CONTROLADOR NATIVO
 
-Atualize o pacote completo nos DOIS computadores. Extraia o ZIP fora da pasta
-do jogo, por exemplo C:\SekiroCoopTeste. Mantenha o executavel e SeamlessCoop juntos.
-A atualizacao nao inclui nem substitui perfis ou saves criados anteriormente.
+Use este MESMO pacote nos dois computadores, na mesma rede privada.
+1. Extraia o ZIP inteiro fora da pasta do Sekiro, por exemplo C:\SekiroCoopTeste.
+   O executavel SekiroCoopTeste.exe fica junto da pasta SeamlessCoop.
+   Para atualizar o assistente anterior, feche os jogos/assistentes e extraia
+   sobre a mesma pasta de teste. Preserve SeamlessCoop/profiles: o ZIP nao
+   inclui nem substitui seus perfis, saves, configuracoes ou registros.
+2. Deixe a Steam aberta nos dois, cada computador na sua conta com Sekiro.
+3. No PC, abra SekiroCoopTeste.exe e clique em Criar jogo neste PC.
+4. No notebook, abra o MESMO executavel, escolha o PC encontrado e clique
+   em Entrar. Os jogos abrem pelo assistente; nao altere as opcoes da Steam.
+5. Escolha Continuar. Em uma pasta nova, o primeiro uso pede Novo Jogo;
+   o perfil de teste pertence a conta atual e fica separado do save pessoal.
+6. Carregue nos dois jogos no MESMO trecho plano, seguro e sem inimigos,
+   perto um do outro. Fique parado alguns segundos. O parceiro aparece
+   automaticamente: NAO e preciso F8. Se estiverem distantes, aproximem-se.
+7. Teste um jogador de cada vez: caminhar em duas direcoes e parar;
+   um ataque, depois uma sequencia; segurar a defesa e soltar. Troque quem
+   controla e quem observa. O boneco remoto deve agir pelo motor do jogo.
+8. Feche os dois jogos normalmente pelo menu, depois os assistentes.
 
-1. Deixe a Steam aberta, cada computador na sua propria conta com Sekiro.
-2. Abra SekiroCoopTeste.exe nos dois computadores.
-3. No PC, clique em Criar jogo neste PC. O assistente prepara e abre o jogo.
-4. No notebook, aguarde o PC aparecer na lista, selecione e clique em Entrar.
-   O jogo sera aberto diretamente. Nao ha codigo para copiar nem linha da Steam.
-5. Na PRIMEIRA vez escolha Novo Jogo nos dois; pode pular as cenas. Este perfil
-   de teste e novo e separado por conta. Seu save pessoal nao e importado.
-   Nas proximas vezes use Continuar: o progresso deste teste fica preservado.
-6. Quando puder controlar os dois personagens no mesmo local seguro, ande
-   alguns passos em um dos computadores e pressione F8 nos dois jogos.
-   Cada jogo deve mostrar o movimento do outro jogador. O teste dura 2 minutos.
-7. F9 pausa a representacao remota; F10 encerra o movimento remoto.
-8. Feche o Sekiro pelo menu e depois feche o assistente.
+Ao tirar o foco do jogo ou ficar sem atualizacoes, o parceiro recebe controles
+neutros. Ao retornar, solte os botoes antes de pressionar novamente; golpes
+antigos nao devem ser reproduzidos. Se a conexao acabar, a area mudar ou os
+personagens divergirem demais, feche pelo menu e crie/entre novamente.
+O teste e limitado a cerca de 25 minutos. Evite descansar, viajar e mudar de
+area. Nao foi implementada reconexao na mesma partida.
 
-Se o Firewall perguntar, permita o programa na rede privada. A descoberta
-funciona na mesma rede local; VPNs, redes publicas e convidados isolados nao
-sao o cenario deste teste. A Steam e o jogo continuam autenticando as contas.
+O primeiro preparo pode copiar cerca de 25 GB para uma instalacao independente.
+As proximas aberturas reutilizam a copia e o perfil dessa conta. A pasta de
+teste pode ficar fora do disco do jogo; o assistente detecta a instalacao Steam.
+Se o Firewall perguntar, permita na rede privada. VPN e rede de convidados
+isolada nao sao o cenario deste teste. A Steam autentica o jogo normalmente.
+Nao transfira saves entre contas; nao e preciso importar o seu save pessoal.
 
-O primeiro preparo pode copiar cerca de 25 GB para uma instalacao de teste
-independente. As proximas aberturas reutilizam essa copia e o perfil da conta.
-Os arquivos pessoais existentes continuam protegidos durante a partida.
-Nao mova saves entre contas nem substitua arquivos para forcar seu carregamento.
+ESTE PACOTE E UM PROTOTIPO PARA VALIDAR O NOVO CONTROLADOR PELA LAN.
+O controlador local ja passou em caminhada, parada, ataque e defesa sustentada.
+O transporte de comandos foi testado em dois processos independentes.
+Esta integracao ainda precisa do teste com DOIS JOGOS REAIS no PC e notebook.
+Ataque e defesa aqui sao acoes do personagem: dano, postura, parry, inimigos,
+chefes, campanha, viagens, convites Steam e quatro jogadores NAO estao
+sincronizados. Salto, esquiva e corrida ainda nao fazem parte deste adaptador.
+O progresso verificado da v1 permanece 10%.
 
-As antigas opcoes de inicializacao da Steam nao sao usadas por estes botoes.
-Se colocou a linha antiga, remova-a uma unica vez quando quiser voltar a usar
-Jogar da Steam para abrir o jogo normal. Nao precisa inserir uma linha nova.
+Os registros sao salvos automaticamente em SeamlessCoop/receipts, em cada PC.
+Guarde os registros dos DOIS computadores para relatar o resultado. Nao
+redistribua a pasta usada, pois ela passa a conter dados privados; compartilhe
+somente o ZIP original do GitHub. Versoes antigas nao conectam a esta versao.
 
-Este prototipo ainda nao sincroniza ataques, dano, inimigos, viagens, campanha,
-reconexao ou convites Steam. Nao use descanso/viagem/troca de area neste teste.
-O percentual funcional permanece 10%; dois jogos reais ainda precisam de prova.
-
-Nao redistribua a pasta depois de usa-la: ela passa a conter perfis e registros
-privados. Para o outro computador use somente o ZIP original publicado.
+Os botoes de testes locais sao opcionais. Testar controlador nativo neste PC
+executa a sequencia automatica local: carregue e fique parado por 25 segundos,
+sem F8. Testar ataques e defesa neste PC e um diagnostico LEGADO separado;
+ele nao valida o controlador nativo pela rede.

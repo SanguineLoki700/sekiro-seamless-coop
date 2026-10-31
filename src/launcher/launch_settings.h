@@ -21,7 +21,10 @@ struct LaunchSettings {
     bool actor_pad_reference_test{};
     bool actor_graph_locomotion_test{};
     bool actor_lan_test{};
+    bool actor_native_commands_test{};
+    bool actor_native_lan_test{};
     bool independent_profile{};
+    bool combat_preview{};
     std::uint32_t lan_role{};
     std::string lan_code;
 };
@@ -29,8 +32,10 @@ struct LaunchSettings {
 // Strict UTF-8 INI subset: exactly one [LAUNCH] section and the four required,
 // case-sensitive keys test_executable, coop_profile_root, account and
 // receipt_directory. Optional actor_test defaults to off; follow, locomotion,
-// pad-reference, graph-locomotion and lan are explicit experiments. Only lan
+// pad-reference, graph-locomotion, lan and native-commands are explicit experiments. Only lan
 // requires lan_role (host/guest) and lan_code; other modes forbid those keys.
+// Native-commands intrinsically selects the independent account profile and
+// forbids lan_profile as well; it requires no room or network settings.
 // One initial BOM, whole-line ;/# comments and surrounding
 // ASCII whitespace are accepted. Values are neither quoted nor expanded.
 // Paths must be explicit local drive paths with fewer than 1024 UTF-16 units

@@ -12,6 +12,14 @@ A [medição anterior](docs/validation/native-follow-metrics-2026-10-25.md), fei
 
 **Assistente LAN simplificado:** botões [Criar jogo / Entrar](docs/LAN_TEST.md), descoberta automática na rede e perfil de teste separado por conta. O primeiro movimento entre PC e notebook foi confirmado usando esse fluxo, sem novas linhas nas propriedades da Steam. O percentual continua em 10%, pois este teste parcial não aceita sozinho os critérios completos.
 
+**Incremento experimental de ações:** o [teste local com um PC](docs/validation/local-actions-2026-10-26.md) confirmou visualmente corrida, salto e esquiva do segundo personagem usando a integração C++, com saída normal e saves pessoais preservados. Os [testes de ações](docs/ACTION_TEST.md) entre dois jogos continuam pendentes; o pacote público anterior permanece como a referência de movimento já observada.
+
+**Novo teste: [controlador nativo pela LAN](docs/validation/native-command-lan-2026-10-30.md).** A prova automática local passou em movimento, ataque e defesa sustentada. A integração encaminha comandos de jogador pelo TCP existente ao controlador exclusivo do ator, sem fallback para eventos HKB. O transporte passou em dois processos independentes; a execução desta integração nos dois jogos reais ainda precisa de validação.
+
+[Baixar o protótipo LAN nativo para PC e notebook](https://github.com/SanguineLoki700/sekiro-seamless-coop/releases/tag/native-command-lan-test-2026-10-30). Use a mesma versão nos dois PCs: **Criar jogo** no PC, **Entrar** no notebook, carregar no mesmo trecho seguro e aguardar a criação automática, sem F8 ou comandos na Steam. O pacote testa caminhada, ataque e defesa; dano, postura e campanha compartilhados continuam pendentes. As provas LAN anteriores acima pertencem ao caminho legado e não validam automaticamente o novo controlador.
+
+O [teste anterior de ataques e defesa](docs/COMBAT_PREVIEW.md) permanece como diagnóstico legado: ataques vistos, defesa sustentada não confirmada. Não ampliaremos esse catálogo como fundamento do multiplayer. Acertos, dano e postura compartilhados continuam pendentes.
+
 O REA usa uma sessão própria de análise no Ghidra. Abrir o Ghidra manualmente não conecta automaticamente aquela janela ao REA. O jogo aberto é útil nas observações em execução; compilação e testes independentes funcionam sem ele.
 
 ## Progresso verificável
@@ -48,7 +56,7 @@ CI verde comprova compilação e testes independentes; não concede pontos nem c
 - Sonda de pesquisa separada com identidade exata e modos [`--actors`](docs/ACTOR_RESEARCH.md#sonda-pública-de-leitura) e [`--creator`](docs/ACTOR_CREATION.md#nova-sonda-reproduzível) para conferir campos, tipos e uma tabela selecionada no Sekiro aberto, somente com leitura.
 - Issues e marcos públicos; cálculo de progresso reproduzível com evidências obrigatórias.
 
-O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. O fluxo está integrado ao lançador para testes explícitos; o personagem remoto real, visível e controlável permanece pendente.
+O formato dos saves separados segue a experiência dos Seamless de DS1/DS2/DS3. O adaptador conserva o codec e o I/O do jogo, retornando handles Windows para arquivos privados. A [ponte de perfil](docs/SAVE_BRIDGE.md) oferece também operações independentes de configuração e armazenamento. Criação e movimento básico de atores adicionais já têm provas parciais; o controle nativo completo e o combate permanecem pendentes.
 
 A observação local com RTTI identificou `WorldChrManImp` e `PlayerIns`; a sonda reconferiu o jogador e os registros selecionados sem alterar o jogo. Isso não estabelece o layout completo, criação ou controle de um ator remoto. Veja a [pesquisa de personagens e suas limitações](docs/ACTOR_RESEARCH.md).
 

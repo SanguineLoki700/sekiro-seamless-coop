@@ -10,6 +10,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 def package(binary_dir: Path, output: Path) -> None:
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip():
+        raise RuntimeError("Commit reviewed source before recording package provenance")
     entries = {
         "SekiroCoopTeste.exe": binary_dir / "skcoop_lan_check.exe",
         "SeamlessCoop/skcoop_launcher.exe": binary_dir / "skcoop_launcher.exe",
@@ -20,13 +22,35 @@ def package(binary_dir: Path, output: Path) -> None:
     }
     contents = {name: path.read_bytes() for name, path in entries.items()}
     manifest = {
-        "kind": "owner-lan-movement-prototype",
+        "kind": "owner-native-command-lan-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 10,
-        "native_motion_adapter": 2,
+        "launch_protocol": 17,
+        "native_motion_adapter": 5,
         "automatic_lan_discovery": True,
         "save_mode": "independent-per-steam-account",
-        "lan_protocol": 1,
+        "lan_protocol": 4,
+        "command_format": 1,
+        "experimental_actions": ["movement", "attack", "held_guard"],
+        "native_lan_in_game_verified": False,
+        "automatic_remote_creation": True,
+        "local_combat_preview": {
+            "loopback_only": True,
+            "attack_and_guard_commands": True,
+            "held_guard_verified": False,
+            "recoverable_path_pause": True,
+            "path_recovery_verified_in_game": False,
+            "authoritative_damage": False,
+        },
+        "native_two_game_action_acceptance": False,
+        "native_controller_trial": {
+            "initial_one_pc_proof_source": "4a4bd5e952fb670566f96642128e34ca7c55c3fb",
+            "criteria_revision": 2,
+            "local_only": True,
+            "automatic_independent_commands": True,
+            "input_backend_verified_in_game": False,
+            "action_output_binding_verified": False,
+            "legacy_hkb_fallback": False,
+        },
         "game": "Sekiro Steam build 5794815 / 1.06",
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "files": {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()},

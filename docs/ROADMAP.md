@@ -6,6 +6,8 @@ Objetivo: quatro jogadores no Windows/Steam, do Templo Dilapidado aos finais da 
 
 Estas etapas mostram a ordem do trabalho. Os sete grupos de pontos continuam medindo a aceitação funcional; completar uma etapa de preparação não soma pontos.
 
+**Prioridade atual:** seguir o [plano do controlador remoto nativo](NATIVE_CONTROLLER.md), preservando a base existente: comprovar o caminho completo → prova automática independente em um PC → mesmo adaptador na LAN atual → combate compartilhado → ampliar e otimizar. A primeira entrega jogável continua sendo uma luta em dupla contra o mesmo inimigo. Eventos HKB anteriores são diagnóstico legado; não serão ampliados como fundamento do multiplayer.
+
 | Etapa | Situação atual | Entrega para avançar | Uso do jogo e do Ghidra |
 |---|---|---|---|
 | 0. Preparação | Base compilada e publicada; testes locais aprovados. | Ferramentas, repositório, protocolo e acompanhamento disponíveis. | Compilação e testes independentes dispensam o jogo aberto. |

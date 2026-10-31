@@ -13,8 +13,8 @@ fs::path physical_temp(){
  const auto n=GetFinalPathNameByHandleW(handle,resolved.data(),static_cast<DWORD>(resolved.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);CloseHandle(handle);
  require(n>4&&n<resolved.size(),"Cannot resolve physical test parent");resolved.resize(n);require(resolved.starts_with(L"\\\\?\\"),"Test parent is not a local DOS path");resolved.erase(0,4);return fs::path(resolved);
 }
-void missing_or_locked(const fs::path& internal,const std::string& code,const fs::path& expected,DWORD error){
- try{(void)prepare_lan_test(internal,1,code);throw std::runtime_error("Preparation unexpectedly succeeded");}
+void missing_or_locked(const fs::path& internal,const std::string& code,const fs::path& expected,DWORD error,bool native=false){
+ try{if(native)(void)prepare_direct_native(internal);else(void)prepare_lan_test(internal,1,code);throw std::runtime_error("Preparation unexpectedly succeeded");}
  catch(const FileOpenError& e){
   require(e.selected_path==expected&&e.system_error==error,"Wrong failed path or Windows error");
   require(diagnostic_wide(e.what()).find(expected.wstring())!=std::wstring::npos,"GUI diagnostic lost the exact Unicode path");
@@ -27,12 +27,15 @@ int wmain(int argc,wchar_t** argv){fs::path root;HANDLE lock=INVALID_HANDLE_VALU
  const auto code=skcoop::lan::ticket_text({"127.0.0.1",24860,skcoop::lan::random_id(),skcoop::lan::random_key()});
  const auto runtime=root/L"skcoop_runtime.dll";
  missing_or_locked(root,code,runtime,ERROR_FILE_NOT_FOUND);
+ missing_or_locked(root,code,runtime,ERROR_FILE_NOT_FOUND,true); // No ticket is supplied to native preparation.
  {std::ofstream f(runtime,std::ios::binary);f<<"owned file must remain intact";}
  lock=CreateFileW(runtime.c_str(),GENERIC_READ,0,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);require(lock!=INVALID_HANDLE_VALUE,"Cannot lock fixture");
  missing_or_locked(root,code,runtime,ERROR_SHARING_VIOLATION);char buffer[64]{};DWORD n{};
+ missing_or_locked(root,code,runtime,ERROR_SHARING_VIOLATION,true);
  require(ReadFile(lock,buffer,sizeof(buffer),&n,nullptr)&&std::string(buffer,n)=="owned file must remain intact","Preparation changed the locked fixture");CloseHandle(lock);lock=INVALID_HANDLE_VALUE;
  fs::copy_file(argv[1],runtime,fs::copy_options::overwrite_existing);
  missing_or_locked(root,code,root/L"skcoop_launcher.exe",ERROR_FILE_NOT_FOUND);
+ missing_or_locked(root,code,root/L"skcoop_launcher.exe",ERROR_FILE_NOT_FOUND,true);
  require(std::distance(fs::directory_iterator(root),fs::directory_iterator{})==1,"Failed preparation wrote files before a valid package existed");
- fs::remove_all(root);std::cout<<"PASS actual preparation failures preserve Unicode paths, Windows errors, locks and package state\n";return 0;
+ fs::remove_all(root);std::cout<<"PASS LAN and ticket-free native preparation failures preserve Unicode paths, Windows errors, locks and package state\n";return 0;
  }catch(const std::exception& e){if(lock!=INVALID_HANDLE_VALUE)CloseHandle(lock);if(!root.empty())fs::remove_all(root);std::cerr<<e.what()<<'\n';return 1;}}

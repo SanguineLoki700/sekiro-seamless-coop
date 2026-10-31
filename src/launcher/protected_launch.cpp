@@ -3,6 +3,7 @@
 #include "file_open_error.h"
 #include "absent_save.h"
 #include "receipt_budget.h"
+#include "native_failed_input_json.h"
 #include "launch_settings.h"
 #include "steam_install.h"
 #include "launcher_process.h"
@@ -208,7 +209,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},independent_profile{};std::uint32_t lan_role{};std::string lan_code;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},actor_native_commands_test{},actor_native_lan_test{},independent_profile{},combat_preview{};std::uint32_t lan_role{};std::string lan_code;};
 Options options_from(const fs::path& config,const fs::path& runtime_root=executable_directory()) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -225,7 +226,10 @@ Options options_from(const fs::path& config,const fs::path& runtime_root=executa
     result.actor_locomotion_test=settings.actor_locomotion_test;
     result.actor_pad_reference_test=settings.actor_pad_reference_test;
     result.actor_graph_locomotion_test=settings.actor_graph_locomotion_test;
-    result.independent_profile=settings.independent_profile;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
+    result.actor_native_commands_test=settings.actor_native_commands_test;
+    result.actor_native_lan_test=settings.actor_native_lan_test;
+    result.independent_profile=settings.independent_profile;result.combat_preview=settings.combat_preview;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
+    if(result.combat_preview)require(result.lan_role==1&&lan::parse_ticket(result.lan_code)->address=="127.0.0.1","Combat preview requires a local host ticket");
     wchar_t roaming[MAX_PATH]{};
     require(SUCCEEDED(SHGetFolderPathW(nullptr,CSIDL_APPDATA,nullptr,SHGFP_TYPE_CURRENT,roaming)),"Cannot resolve actual roaming profile");
     result.roaming=normalized(roaming);
@@ -331,7 +335,69 @@ std::string counters(const SharedStatus& s) {
         <<",\"graph_writes\":"<<load(s.actor_graph_writes)<<",\"graph_nonzero\":"<<load(s.actor_graph_nonzero)
         <<"},\"lan\":{\"state\":"<<load(s.lan_state)<<",\"error\":"<<load(s.lan_error)<<",\"system_error\":"<<load(s.lan_system_error)
         <<",\"wait\":"<<load(s.lan_wait)<<",\"frames_sent\":"<<load(s.lan_frames_sent)<<",\"frames_received\":"<<load(s.lan_frames_received)
-        <<",\"rejected\":"<<load(s.lan_rejected)<<",\"stale_frames\":"<<load(s.lan_stale_frames)<<"}}";
+        <<",\"rejected\":"<<load(s.lan_rejected)<<",\"stale_frames\":"<<load(s.lan_stale_frames)
+        <<"},\"actions\":{\"error\":"<<load(s.action_error)<<",\"sprinting\":"<<load(s.action_sprinting)
+        <<",\"captured\":"<<load(s.action_captured)<<",\"replayed\":"<<load(s.action_replayed)
+        <<",\"discarded\":"<<load(s.action_discarded)<<",\"released\":"<<load(s.action_released)
+        <<",\"ignored_sources\":"<<load(s.action_ignored_sources)<<",\"unsupported_source\":"<<load(s.action_unsupported_source)
+        <<",\"jump_captured\":"<<load(s.action_jump_captured)<<",\"step_captured\":"<<load(s.action_step_captured)<<",\"sprint_captured\":"<<load(s.action_sprint_captured)
+        <<",\"jump_replayed\":"<<load(s.action_jump_replayed)<<",\"step_replayed\":"<<load(s.action_step_replayed)<<",\"sprint_replayed\":"<<load(s.action_sprint_replayed)
+        <<",\"guarding\":"<<load(s.action_guarding)<<",\"guard_rearm_required\":"<<load(s.action_guard_rearm_required)
+        <<",\"attack_captured\":"<<load(s.action_attack_captured)<<",\"attack_replayed\":"<<load(s.action_attack_replayed)
+        <<",\"guard_enter_captured\":"<<load(s.action_guard_enter_captured)<<",\"guard_exit_captured\":"<<load(s.action_guard_exit_captured)
+        <<",\"guard_enter_replayed\":"<<load(s.action_guard_enter_replayed)<<",\"guard_exit_replayed\":"<<load(s.action_guard_exit_replayed)
+        <<"},\"native_controller\":{\"phase\":"<<load(s.native_controller_phase)<<",\"fault\":"<<load(s.native_controller_fault)
+        <<",\"stop_reason\":"<<load(s.native_controller_reason)
+        <<",\"commands\":"<<load(s.native_controller_commands)<<",\"consumed\":"<<load(s.native_controller_consumed)
+        <<",\"guard_ms\":"<<load(s.native_controller_guard_ms)<<",\"displacement_mm\":"<<load(s.native_controller_displacement_mm)
+        <<",\"manual_events\":"<<load(s.native_controller_manual_events)<<",\"primary_writes\":"<<load(s.native_controller_primary_writes)
+        <<",\"state_code\":"<<load(s.native_controller_state_code)<<",\"output_bound\":"<<(load(s.native_controller_output_bound)?"true":"false")
+        <<",\"negative_control_passed\":"<<(load(s.native_controller_negative_passed)?"true":"false")
+        <<",\"input_queries\":"<<load(s.native_controller_input_queries)<<",\"parameter_resolvers\":"<<load(s.native_controller_resolvers)
+        <<",\"held_queries\":"<<load(s.native_controller_held_queries)<<",\"pressed_queries\":"<<load(s.native_controller_pressed_queries)
+        <<",\"trace_overflow\":"<<load(s.native_controller_trace_overflow)<<",\"trace\":[";
+    const auto count=std::clamp<LONG>(load(s.native_controller_trace_count),0,static_cast<LONG>(launch::native_trace_capacity));
+    for(LONG i=0;i<count;++i){const auto& item=s.native_controller_trace[i];if(i)value<<',';
+        const auto flags=load(item.observation_flags);
+        value<<"{\"phase\":"<<load(item.phase)<<",\"state_code\":"<<load(item.state_code)
+            <<",\"generation\":"<<load(item.input_generation)<<",\"frame\":"<<load(item.frame_sequence)
+            <<",\"elapsed_ms\":"<<load(item.elapsed_ms)<<",\"observation_flags\":"<<flags<<",\"position_mm\":";
+        if(flags&launch::native_trace_position_valid)
+            value<<'['<<load(item.position_mm[0])<<','<<load(item.position_mm[1])<<','<<load(item.position_mm[2])<<']';
+        else value<<"null";
+        value<<",\"resolved_input\":";
+        if(flags&launch::native_trace_consumption_valid)
+            value<<"{\"movement_milli\":["<<load(item.resolved_milli[0])<<','<<load(item.resolved_milli[1])<<','<<load(item.resolved_milli[2])
+                <<"],\"held\":"<<load(item.held_mask)<<'}';
+        else value<<"null";
+        value<<'}';}
+    value<<"],\"mailbox_failure\":";
+    const auto& diagnostic=s.native_controller_mailbox;const auto kind=load(diagnostic.kind);
+    const auto failure_epoch=load(diagnostic.epoch);
+    if(!kind)value<<"null";
+    else {
+        value<<"{\"kind\":"<<kind<<",\"latch_fault\":"<<load(diagnostic.latch_fault)<<",\"epoch\":"<<failure_epoch
+            <<",\"button_mask\":"<<load(diagnostic.button)<<",\"expected_held\":"<<load(diagnostic.expected_held)
+            <<",\"observed_held\":"<<load(diagnostic.observed_held)<<",\"held_ms\":"<<load(diagnostic.held_ms)
+            <<",\"expected_move_micro\":["<<load(diagnostic.expected_move_micro[0])<<','<<load(diagnostic.expected_move_micro[1])<<','<<load(diagnostic.expected_move_micro[2])
+            <<"],\"observed_move_micro\":["<<load(diagnostic.observed_move_micro[0])<<','<<load(diagnostic.observed_move_micro[1])<<','<<load(diagnostic.observed_move_micro[2])<<"]}";
+    }
+    value<<",\"failed_input_sample\":"<<native_failed_input_json(kind,failure_epoch,s.native_controller_failed_input);
+    const auto& movement=s.native_controller_movement;
+    const auto pad_epoch=load(movement.pad_epoch),consumer_epoch=load(movement.consumer_epoch),resolver_epoch=load(movement.resolver_epoch);
+    const auto vector=[&](const volatile LONG* data){value<<'[';for(unsigned i=0;i<4;++i){if(i)value<<',';value<<load(data[i]);}value<<']';};
+    value<<",\"movement_probe\":{\"pad\":";
+    if(!pad_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<pad_epoch<<",\"query_mask\":"<<load(movement.query_mask)<<",\"yaw_milli\":"<<load(movement.yaw_milli)
+        <<",\"axes_milli\":["<<load(movement.axes_milli[0])<<','<<load(movement.axes_milli[1])<<"],\"vector_milli\":";vector(movement.after_pad_milli);value<<'}';}
+    value<<",\"consumer\":";
+    if(!consumer_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<consumer_epoch<<",\"vector_milli\":";vector(movement.at_consumer_milli);value<<'}';}
+    value<<",\"after\":";
+    if(!resolver_epoch)value<<"null";
+    else{value<<"{\"epoch\":"<<resolver_epoch<<",\"vector_milli\":";vector(movement.after_resolver_milli);
+        value<<",\"speed_milli\":"<<load(movement.speed_milli)<<",\"angle_milli\":"<<load(movement.angle_milli)<<'}';}
+    value<<"},\"result_is_provisional\":true}}";
     return value.str();
 }
 std::string process_metrics(HANDLE process) {
@@ -371,10 +437,17 @@ void wait_foreign_close(Receipt& receipt,DWORD own_pid,bool& detected,bool& moni
         Sleep(500);
     }
 }
-LaunchStatus launch_snapshot(const SharedStatus& s,bool finished=false,bool completed=false) {
+LaunchStatus launch_snapshot(const SharedStatus& s,std::string_view receipt_name,bool finished=false,bool completed=false) {
     return {load(s.phase)==static_cast<LONG>(Phase::ready),finished,completed,s.child_pid,static_cast<std::uint32_t>(load(s.hooks_mask)),
         static_cast<std::uint32_t>(load(s.actor_phase)),static_cast<std::uint32_t>(load(s.actor_error)),static_cast<std::uint32_t>(load(s.lan_state)),
-        static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0};
+        static_cast<std::uint32_t>(load(s.lan_error)),static_cast<std::uint32_t>(load(s.lan_wait)),static_cast<std::uint64_t>(load(s.lan_frames_sent)),static_cast<std::uint64_t>(load(s.lan_frames_received)),load(s.actor_motion_paused)!=0,
+        static_cast<std::uint32_t>(load(s.action_error)),static_cast<std::uint64_t>(load(s.action_captured)),static_cast<std::uint64_t>(load(s.action_replayed)),
+        load(s.action_guard_rearm_required)!=0,load(s.action_guarding)!=0,std::string(receipt_name),
+        static_cast<std::uint32_t>(load(s.native_controller_phase)),static_cast<std::uint32_t>(load(s.native_controller_fault)),
+        static_cast<std::uint64_t>(load(s.native_controller_commands)),static_cast<std::uint64_t>(load(s.native_controller_consumed)),
+        static_cast<std::uint64_t>(load(s.native_controller_guard_ms)),static_cast<std::uint64_t>(load(s.native_controller_displacement_mm)),
+        static_cast<std::uint64_t>(load(s.native_controller_manual_events)),static_cast<std::uint64_t>(load(s.native_controller_primary_writes)),
+        static_cast<std::int32_t>(load(s.native_controller_state_code)),load(s.native_controller_output_bound)!=0};
 }
 int run(const Options& options, bool check_only,const LaunchObserver& observer={}) {
     require(!another_game(),"Close all existing Sekiro processes before starting this isolated harness");
@@ -470,6 +543,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
     std::array<std::uint8_t,16> nonce{};
     require(BCryptGenRandom(nullptr,nonce.data(),static_cast<ULONG>(nonce.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0,"Cannot generate handshake nonce");
     Receipt receipt(output,nonce);
+    const auto receipt_name="game-test-"+hex(nonce)+".jsonl";
     receipt.emit("{\"event\":\"prepared\",\"protocol\":"+std::to_string(protocol_version)+",\"nonce\":"+quote(hex(nonce))+",\"exe_sha256\":"+quote(hex(game.digest))+
         ",\"runtime_sha256\":"+quote(hex(runtime.digest))+",\"solo_primary_before\":"+primary.json_digest()+",\"solo_backup_before\":"+backup.json_digest()+",\"solo_primary_present\":"+(primary.present()?"true":"false")+",\"solo_backup_present\":"+(backup.present()?"true":"false")+
         ",\"solo_handles_share_mode\":"+std::string(primary.present()&&backup.present()?"0":"null")+",\"missing_originals_monitored\":"+(!primary.present()||!backup.present()?"true":"false")+",\"original_saves_created\":false}");
@@ -511,12 +585,12 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         }
         shared->child_pid=child.pid;
         Payload payload{};payload.struct_size=sizeof(payload);payload.version=protocol_version;payload.host_pid=GetCurrentProcessId();payload.child_pid=child.pid;
-        payload.actor_test=options.actor_lan_test?ActorTest::lan:options.actor_graph_locomotion_test?ActorTest::graph_locomotion:
+        payload.actor_test=options.actor_native_lan_test?ActorTest::lan_native_commands:options.actor_native_commands_test?ActorTest::native_commands:options.actor_lan_test?ActorTest::lan:options.actor_graph_locomotion_test?ActorTest::graph_locomotion:
             (options.actor_pad_reference_test?ActorTest::pad_reference:
             (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off)));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
-        if(options.actor_lan_test){payload.lan_role=options.lan_role;payload.lan_profile=options.independent_profile?1u:0u;std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
-            const auto& scenario=options.independent_profile?lan::independent_motion_scenario:primary.digest;std::copy(scenario.begin(),scenario.end(),payload.scenario_sha256);}
+        if(options.actor_lan_test){payload.lan_role=options.lan_role;payload.lan_profile=options.combat_preview?2u:(options.independent_profile?1u:0u);std::copy(options.lan_code.begin(),options.lan_code.end(),payload.lan_ticket);
+            const auto& scenario=options.combat_preview?lan::local_combat_scenario:(options.independent_profile?lan::independent_motion_scenario:primary.digest);std::copy(scenario.begin(),scenario.end(),payload.scenario_sha256);}
         copy_text(payload.exe_path,path_units,game.path.wstring());copy_text(payload.solo_roaming,path_units,roaming.path.wstring());
         copy_text(payload.coop_roaming,path_units,coop.path.wstring());copy_text(payload.account,account_units,options.account);
         require(DuplicateHandle(GetCurrentProcess(),mapping.get(),child.process,&payload.mapping_handle,0,FALSE,DUPLICATE_SAME_ACCESS)&&
@@ -532,8 +606,8 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             "READY signal did not contain a matching successful bootstrap receipt");
         ready_observed=true;
         receipt.emit("{\"event\":\"ready\",\"child_pid\":"+std::to_string(child.pid)+",\"nonce\":"+quote(hex(nonce))+",\"bootstrap\":"+counters(*shared)+"}");
-        if(observer)observer(launch_snapshot(*shared));
-        ULONGLONG actor_report_at{};std::array<LONG,7> previous_signal{};
+        if(observer)observer(launch_snapshot(*shared,receipt_name));
+        ULONGLONG actor_report_at{};std::array<LONG,13> previous_signal{};
         bool actor_samples_full{};
         for(;;) {
             require(primary.expected_state()&&backup.expected_state(),"An originally absent personal save appeared outside the isolated profile; the test was stopped without deleting it");
@@ -542,8 +616,8 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
             const auto result=WaitForSingleObject(child.process,500);
             if(result==WAIT_OBJECT_0)break;
             require(result==WAIT_TIMEOUT,"Cannot wait on owned child");
-            if(observer)observer(launch_snapshot(*shared));
-            const std::array<LONG,7> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error)};
+            if(observer)observer(launch_snapshot(*shared,receipt_name));
+            const std::array<LONG,13> signal{static_cast<LONG>(load(shared->hooks_mask)),load(shared->actor_phase),load(shared->actor_error),load(shared->lan_state),load(shared->lan_error),load(shared->lan_wait),load(shared->fatal_error),load(shared->action_error),load(shared->native_controller_phase),load(shared->native_controller_fault),load(shared->native_controller_state_code),load(shared->native_controller_output_bound),load(shared->native_controller_trace_count)};
             if(options.actor_follow_test && !actor_samples_full && (GetTickCount64()-actor_report_at>=(options.independent_profile?30000u:1000u)||signal!=previous_signal)) {
                 previous_signal=signal;
                 actor_report_at=GetTickCount64();
@@ -567,7 +641,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         ",\"foreign_game_observed\":"+(foreign_detected?"true":"false")+",\"foreign_monitor_error\":"+(monitor_error?"true":"false")+",\"solo_primary_unchanged\":"+(primary_unchanged?"true":"false")+
         ",\"solo_backup_unchanged\":"+(backup_unchanged?"true":"false")+",\"graphics_unchanged\":"+(graphics_unchanged?"true":"false")+",\"solo_primary_after\":"+primary.json_digest()+
         ",\"solo_backup_after\":"+backup.json_digest()+",\"native\":"+counters(*shared)+",\"failure\":"+quote(failure)+"}");
-    if(observer)observer(launch_snapshot(*shared,true,completed));
+    if(observer)observer(launch_snapshot(*shared,receipt_name,true,completed));
     final_protection.active=false;
     return completed?0:40;
 }
@@ -613,9 +687,14 @@ void copy_asset_tree(const fs::path& from,const fs::path& to,unsigned depth=0){
 std::string utf8(std::wstring_view text){const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);require(n>0,"Cannot encode setup path");std::string result(n,0);require(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),result.data(),n,nullptr,nullptr)==n,"Cannot encode setup path");return result;}
 
 } // namespace
-static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,std::string_view code,bool independent){
-    require((role==1||role==2)&&lan::parse_ticket(code).has_value(),"Invalid LAN role or room code");
-    require(!another_game(),"Close Sekiro before preparing the protected LAN profile");
+static fs::path prepare_game_impl(const fs::path& requested,std::uint32_t role,std::string_view code,bool independent,bool combat_preview=false,bool native_commands=false){
+    if(native_commands)require(!role&&code.empty()&&independent&&!combat_preview,"Native commands do not accept LAN settings");
+    else{
+        const auto ticket=lan::parse_ticket(code);
+        require((role==1||role==2)&&ticket.has_value(),"Invalid LAN role or room code");
+        require(!combat_preview||(independent&&role==1&&ticket->address=="127.0.0.1"),"Combat preview requires a local host ticket");
+    }
+    require(!another_game(),"Close Sekiro before preparing the protected test profile");
     Directory internal(normalized(fs::absolute(requested)));
     require(internal.path.wstring().size()+(independent?52:24)<MAX_PATH,"Extract the kit to a shorter local folder, for example C:\\SekiroCoopTeste");
     File runtime(internal.path/L"skcoop_runtime.dll",FILE_SHARE_READ);validate_runtime_pe(runtime);
@@ -637,7 +716,8 @@ static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,st
     for(const auto name:{L"movie",L"sound"})copy_asset_tree(original.path.parent_path()/name,game/name);
     const auto appid=game/L"steam_appid.txt";
     if(GetFileAttributesW(appid.c_str())==INVALID_FILE_ATTRIBUTES){require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect test AppID file");new_bytes(appid,"814380\n");}
-    // A fresh profile per setup preserves every previous trial and save.
+    // Legacy setups preserve a fresh profile per trial. Direct tests share
+    // only this account's existing independently owned movement-v2 profile.
     const auto id=hex(lan::random_id()).substr(0,12);
     if(independent){ensure_setup_directory(internal.path/L"profiles");ensure_setup_directory(internal.path/L"profiles"/account);}
     const auto profile=independent?internal.path/L"profiles"/account/L"movement-v2":internal.path/ascii_wide("profile-"+id);
@@ -661,8 +741,10 @@ static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,st
     }
     else require(GetLastError()==ERROR_FILE_NOT_FOUND,"Cannot inspect graphics configuration");
     ensure_setup_directory(internal.path/L"config");ensure_setup_directory(internal.path/L"receipts");
-    const auto config=internal.path/L"config"/ascii_wide("lan-"+id+".ini");
-    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\nactor_test=lan\nlan_role="+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(independent?"lan_profile=independent\n":"");
+    const auto config=internal.path/L"config"/ascii_wide((native_commands?"native-":"lan-")+id+".ini");
+    const auto mode=native_commands?std::string("actor_test=native-commands\n"):
+        std::string(independent&&!combat_preview?"actor_test=lan-native-commands\nlan_role=":"actor_test=lan\nlan_role=")+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(combat_preview?"lan_profile=combat-preview\n":(independent?"lan_profile=independent\n":""));
+    const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\n"+mode;
     (void)parse_launch_settings(settings);new_bytes(config,settings);
     require(primary.unchanged()&&backup.unchanged(),"Original saves changed during preparation");
     // Pinned original handles close on return. Launch revalidates every file,
@@ -670,12 +752,13 @@ static fs::path prepare_lan_impl(const fs::path& requested,std::uint32_t role,st
     return config;
 }
 std::wstring prepare_lan_test(const fs::path& requested,std::uint32_t role,std::string_view code){
-    const auto config=prepare_lan_impl(requested,role,code,false);
+    const auto config=prepare_game_impl(requested,role,code,false);
     return quote_argument((fs::absolute(requested)/L"skcoop_launcher.exe").wstring())+L" --steam-start "+quote_argument(config.wstring())+L" %command%";
 }
-fs::path prepare_direct_lan(const fs::path& requested,std::uint32_t role,std::string_view code){
-    return prepare_lan_impl(requested,role,code,true);
+fs::path prepare_direct_lan(const fs::path& requested,std::uint32_t role,std::string_view code,bool combat_preview){
+    return prepare_game_impl(requested,role,code,true,combat_preview);
 }
+fs::path prepare_direct_native(const fs::path& requested){return prepare_game_impl(requested,0,{},true,false,true);}
 int check_protected_launch(const fs::path& config) {return run(options_from(config),true);}
 int direct_protected_launch(const fs::path& config,const fs::path& runtime_directory,const LaunchObserver& observer) {
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);

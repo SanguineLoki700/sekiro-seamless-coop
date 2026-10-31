@@ -36,6 +36,8 @@ public:
     Error error{};
     bool motion_paused{};
     bool native_locomotion{}, native_pad_reference{}, stop_requested{};
+    bool external_placement{};Vector initial_position{};
+    std::uint64_t max_follow_ms{120000};
     std::uint64_t creation_calls{}, ticks{}, pose_writes{};
     std::uint64_t observed_displacement_mm{};
 private:
