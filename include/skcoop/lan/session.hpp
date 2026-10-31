@@ -10,6 +10,12 @@ struct ReceivedMotion {
  ActionScope scope; // Derived only from the accepted authenticated envelope.
  std::uint64_t packet_sequence{},arrival_ms{};
 };
+struct ReceivedCommand {
+ actors::PlayerCommand command;
+ actors::CommandScope scope; // Derived only from authenticated session envelope.
+ std::uint64_t packet_sequence{},arrival_ms{};
+ bool enabled{};
+};
 class Session {
 public:
  explicit Session(SessionConfig);
@@ -17,6 +23,8 @@ public:
  bool receive(const Packet&,std::uint64_t now);
  void tick(std::uint64_t now);
  void send_frame(const Motion&);
+ void send_command(const actors::PlayerCommand&,bool enabled);
+ std::optional<ReceivedCommand> take_remote_command();
  void heartbeat();void stop();
  std::vector<Packet> take_outgoing();
  State state()const noexcept{return state_;}Failure failure()const noexcept{return failure_;}
@@ -29,6 +37,7 @@ private:
  SessionConfig config_;Stage stage_{Stage::closed};State state_{State::starting};Failure failure_{};
  Id connection_{};std::uint64_t peer_{},sequence_{},received_{},started_{},last_receive_{},ignored_{};
  std::vector<Packet> outgoing_;std::optional<ReceivedMotion> remote_;
+ std::optional<ReceivedCommand> command_;
  void send(Kind);bool reject(Failure);
 };
 struct MotionSample { Motion motion;std::uint64_t time{},sequence{}; };

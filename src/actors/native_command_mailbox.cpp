@@ -122,6 +122,9 @@ bool NativeCommandMailbox::observe_resolver(std::uint64_t epoch,MovementIntent r
     const PlayerInput observed{resolved,resolved_held_};
     if(!valid(PlayerInput{resolved,0})){fail_locked(NativeMailboxFault::invalid_resolver_movement,observed);return false;}
     if(!native_movement_matches(frame_.input.movement,resolved)){
+        if(movement_onset_==NativeMovementOnset::observe_continuous){
+            resolver_gate_=resolver_speed_=resolver_angle_=false;resolver_at_=0;resolved_movement_={};return false;
+        }
         // The supported Pad's previous-stick filter can produce exactly zero
         // on its first moving update. Keep the actual zero uncredited; neither
         // submitted input nor a prior epoch may stand in for consumption.
@@ -189,5 +192,9 @@ bool NativeCommandMailbox::reset_generation(std::uint64_t generation){
     generation_=generation;latch_=NativeInputLatch(generation);failed_=false;invalidate_locked();frame_={};return !failed_;
 }
 bool NativeCommandMailbox::failed()const {std::lock_guard lock(mutex_);return failed_;}
+bool NativeCommandMailbox::configure_movement_onset(NativeMovementOnset onset){
+ std::lock_guard lock(mutex_);if(epoch_counter_||in_flight_||association_)return false;
+ movement_onset_=onset;return true;
+}
 NativeMailboxFailure NativeCommandMailbox::failure()const {std::lock_guard lock(mutex_);return failure_;}
 }

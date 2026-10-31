@@ -45,6 +45,10 @@ public:
  explicit Peer(SessionConfig,std::string bind_address="0.0.0.0");
  ~Peer();Peer(const Peer&)=delete;Peer& operator=(const Peer&)=delete;
  bool try_offer(const Motion&);bool try_read(View&)const;
+ // Bounded durable hand-offs: no latest-only overwrite of unsent input edges.
+ bool try_offer_command(const actors::PlayerCommand&,bool enabled);
+ bool try_take_commands(std::array<ReceivedCommand,actors::command_queue_capacity>&,std::size_t&);
+ bool try_set_command_following(bool);
  bool try_ack_actions(std::uint64_t packet_sequence); // Nonblocking hand-off ACK.
  View read()const; // GUI/tests only: short blocking mutex acquisition.
  void request_stop()noexcept;void stop(); // join only outside DllMain/game callbacks.

@@ -37,7 +37,7 @@ target_link_libraries(skcoop_lan_actions PUBLIC skcoop_windows_options)
 
 add_library(skcoop_lan STATIC src/lan/protocol.cpp src/lan/session.cpp src/lan/peer.cpp src/lan/discovery.cpp src/lan/local_preview.cpp)
 target_include_directories(skcoop_lan PUBLIC include)
-target_link_libraries(skcoop_lan PUBLIC skcoop_windows_options skcoop_lan_actions skcoop_core bcrypt ws2_32 iphlpapi)
+target_link_libraries(skcoop_lan PUBLIC skcoop_windows_options skcoop_lan_actions skcoop_player_commands skcoop_core bcrypt ws2_32 iphlpapi)
 
 add_library(skcoop_launcher_support STATIC
   src/launcher/preflight.cpp
@@ -153,6 +153,11 @@ if(BUILD_TESTING)
   target_include_directories(skcoop_native_action_state_tests PRIVATE src/runtime)
   target_link_libraries(skcoop_native_action_state_tests PRIVATE skcoop_windows_options)
   add_test(NAME native_action_state_result_tests COMMAND skcoop_native_action_state_tests)
+  add_executable(skcoop_native_command_transport_tests tests/native_command_transport_tests.cpp)
+  target_include_directories(skcoop_native_command_transport_tests PRIVATE src/launcher src/runtime)
+  target_link_libraries(skcoop_native_command_transport_tests PRIVATE skcoop_lan skcoop_native_command_mailbox skcoop_launcher_support)
+  add_test(NAME native_command_two_process_transport_tests COMMAND skcoop_native_command_transport_tests)
+  set_tests_properties(native_command_two_process_transport_tests PROPERTIES TIMEOUT 30)
   add_executable(skcoop_lan_action_tests tests/lan_action_tests.cpp)
   target_link_libraries(skcoop_lan_action_tests PRIVATE skcoop_lan_actions)
   add_test(NAME lan_action_history_tests COMMAND skcoop_lan_action_tests)

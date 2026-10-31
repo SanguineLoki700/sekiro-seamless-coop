@@ -121,12 +121,13 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
         else invalid("Unknown launch settings key.");
         if (seen & bit) invalid("Duplicate launch settings key.");
         if (bit == 16) {
-            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion" && value != L"lan" && value != L"native-commands") invalid("Unknown actor_test mode.");
+            if (value != L"off" && value != L"follow" && value != L"locomotion" && value != L"pad-reference" && value != L"graph-locomotion" && value != L"lan" && value != L"native-commands" && value != L"lan-native-commands") invalid("Unknown actor_test mode.");
             result.actor_follow_test = value != L"off";
             result.actor_locomotion_test = value == L"locomotion";
             result.actor_pad_reference_test = value == L"pad-reference";
             result.actor_graph_locomotion_test = value == L"graph-locomotion";
-            result.actor_lan_test = value == L"lan";
+            result.actor_native_lan_test=value==L"lan-native-commands";
+            result.actor_lan_test = value == L"lan"||result.actor_native_lan_test;
             result.actor_native_commands_test = value == L"native-commands";
             if(result.actor_native_commands_test)result.independent_profile=true;
         } else if(bit==128) {
@@ -153,6 +154,7 @@ LaunchSettings parse_launch_settings(std::string_view utf8) {
     if (!section || (seen & 15) != 15) invalid("All four [LAUNCH] keys are required.");
     if(result.actor_lan_test ? (seen&96)!=96 : (seen&96)!=0)invalid("LAN mode requires both LAN settings; other modes forbid them.");
     if(!result.actor_lan_test&&(seen&128))invalid("Independent profile requires LAN mode.");
+    if(result.actor_native_lan_test){if(result.combat_preview)invalid("Native LAN forbids legacy combat preview.");result.independent_profile=true;}
     return result;
 }
 

@@ -22,14 +22,17 @@ def package(binary_dir: Path, output: Path) -> None:
     }
     contents = {name: path.read_bytes() for name, path in entries.items()}
     manifest = {
-        "kind": "owner-lan-actions-prototype",
+        "kind": "owner-native-command-lan-prototype",
         "playable_coop_release": False,
-        "launch_protocol": 16,
-        "native_motion_adapter": 4,
+        "launch_protocol": 17,
+        "native_motion_adapter": 5,
         "automatic_lan_discovery": True,
         "save_mode": "independent-per-steam-account",
-        "lan_protocol": 3,
-        "experimental_actions": ["sprint", "jump", "dodge"],
+        "lan_protocol": 4,
+        "command_format": 1,
+        "experimental_actions": ["movement", "attack", "held_guard"],
+        "native_lan_in_game_verified": False,
+        "automatic_remote_creation": True,
         "local_combat_preview": {
             "loopback_only": True,
             "attack_and_guard_commands": True,
@@ -40,6 +43,7 @@ def package(binary_dir: Path, output: Path) -> None:
         },
         "native_two_game_action_acceptance": False,
         "native_controller_trial": {
+            "initial_one_pc_proof_source": "4a4bd5e952fb670566f96642128e34ca7c55c3fb",
             "criteria_revision": 2,
             "local_only": True,
             "automatic_independent_commands": True,

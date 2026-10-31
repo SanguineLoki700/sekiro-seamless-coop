@@ -2,6 +2,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include "skcoop/lan/peer.hpp"
+#include <deque>
 #include <atomic>
 #include <algorithm>
 #include <mutex>
@@ -59,6 +60,12 @@ bool ActionFrameBuffer::acknowledge(std::uint64_t sequence)noexcept{
 struct Peer::Impl {
  SessionConfig config;std::string bind;std::atomic<bool> stop_requested{};std::thread thread;
  mutable std::mutex mutex;View published;std::optional<Motion> local;std::uint64_t local_at{};
+ struct OfferedCommand {actors::PlayerCommand command;bool enabled{};std::uint64_t at{};};
+ std::deque<OfferedCommand> outgoing_commands;
+ std::deque<ReceivedCommand> incoming_commands;
+ bool command_following{};
+ std::optional<ReceivedCommand> latest_command;
+ std::optional<actors::PlayerCommand> last_local_command;
  Impl(SessionConfig c,std::string b):config(std::move(c)),bind(std::move(b)){if(!config.participant)config.participant=random_participant();published.status.participant=config.participant;}
  void run()noexcept {
   Status status;status.participant=config.participant;MotionBuffer buffer;
@@ -95,6 +102,12 @@ struct Peer::Impl {
      std::optional<Motion> offered;std::uint64_t offered_at{};{std::lock_guard lock(mutex);offered=local;offered_at=local_at;}
      if(offered&&now>=offered_at&&now-offered_at<=500&&now>=next_frame){session.send_frame(*offered);next_frame=now+50;next_heartbeat=now+250;}
      else if(now>=next_heartbeat){session.heartbeat();next_heartbeat=now+250;}
+     std::optional<OfferedCommand> command;
+     {std::lock_guard lock(mutex);if(!outgoing_commands.empty()){command=outgoing_commands.front();outgoing_commands.pop_front();}}
+     if(command){
+      if(now<command->at||now-command->at>actors::command_expiry_ms)throw std::runtime_error("Expired unsent command queue");
+      session.send_command(command->command,command->enabled);
+     }
      for(const auto& p:session.take_outgoing())enqueue(p);
     }
     fd_set read,write,errors;FD_ZERO(&read);FD_ZERO(&write);FD_ZERO(&errors);FD_SET(socket.value,&read);FD_SET(socket.value,&errors);if(!tx.empty())FD_SET(socket.value,&write);
@@ -119,6 +132,14 @@ struct Peer::Impl {
      if(!decoded){++status.rejected;status.failure=decoded.error==Error::authentication?Failure::authentication:Failure::protocol;status.state=State::failed;break;}
      ++status.received;const auto& p=*decoded.packet;
      if(!session.receive(p,GetTickCount64())){++status.rejected;if(session.state()==State::failed){status.state=State::failed;status.failure=session.failure();break;}continue;}
+     if(const auto command=session.take_remote_command()){
+      std::lock_guard lock(mutex);
+      latest_command=*command;
+      if(command_following){
+       if(incoming_commands.size()==actors::command_queue_capacity)throw std::runtime_error("Incoming command queue full");
+       incoming_commands.push_back(*command);
+      }
+     }
      if(const auto frame=session.take_remote_frame()){
       const auto result=buffer.push(frame->motion,frame->arrival_ms,frame->packet_sequence);if(result==PushResult::scene_changed){status.state=State::failed;status.failure=Failure::scene;break;}
       if(result==PushResult::invalid){status.state=State::failed;status.failure=Failure::protocol;break;}
@@ -146,6 +167,30 @@ void Peer::request_stop()noexcept{impl_->stop_requested=true;}
 void Peer::stop(){request_stop();if(impl_->thread.joinable())impl_->thread.join();}
 bool Peer::try_offer(const Motion& m){if(!valid(impl_->config.build,m))return false;std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;impl_->local=m;impl_->local_at=GetTickCount64();return true;}
 bool Peer::try_read(View& v)const{std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;v=impl_->published;return true;}
+bool Peer::try_offer_command(const actors::PlayerCommand& c,bool enabled){
+ if(impl_->config.build.purpose!=Purpose::native_commands||!actors::valid(c,3))return false;
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);
+ if(!lock||impl_->outgoing_commands.size()==actors::command_queue_capacity)return false;
+ impl_->outgoing_commands.push_back({c,enabled,GetTickCount64()});impl_->last_local_command=c;return true;
+}
+bool Peer::try_set_command_following(bool enabled){
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;
+ if(impl_->command_following==enabled)return true;
+ impl_->command_following=enabled;impl_->incoming_commands.clear();
+ if(enabled){if(impl_->latest_command)impl_->incoming_commands.push_back(*impl_->latest_command);}
+ else{
+  // Explicit pause: discard old outgoing presses and send only a disabled
+  // baseline. Reusing its source sequence never refreshes a freshness lease.
+  impl_->outgoing_commands.clear();
+  if(impl_->last_local_command)impl_->outgoing_commands.push_back({*impl_->last_local_command,false,GetTickCount64()});
+ }
+ return true;
+}
+bool Peer::try_take_commands(std::array<ReceivedCommand,actors::command_queue_capacity>& out,std::size_t& count){
+ std::unique_lock lock(impl_->mutex,std::try_to_lock);count=0;if(!lock)return false;
+ for(const auto& c:impl_->incoming_commands)out[count++]=c;
+ impl_->incoming_commands.clear();return true;
+}
 bool Peer::try_ack_actions(std::uint64_t sequence){
  std::unique_lock lock(impl_->mutex,std::try_to_lock);if(!lock)return false;
  const bool ok=impl_->published.actions.acknowledge(sequence);

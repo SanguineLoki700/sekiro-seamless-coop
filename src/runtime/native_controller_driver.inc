@@ -23,6 +23,7 @@ thread_local ParameterScope* parameter_scope{};
 std::atomic<Token> owned_controller{},owned_actor{},primary_controller{};
 std::atomic<DWORD> owner_thread{};
 std::atomic<bool> aborted{};
+std::atomic<bool> pause_requested{};
 std::atomic<bool> retired{};
 std::atomic<bool> trial_finished{};
 Binding guest,source;
@@ -267,6 +268,9 @@ template<std::size_t Index> std::uint8_t flag(void* context) {
 }
 void pad_before(PadScope& scope,void* controller,void* component,float delta) noexcept {
     if(!valid_update_delta(delta)){
+        if(native_lan_mode&&std::isfinite(delta)&&delta>=0){
+            pause_requested=true;commands_armed=false;neutralize();return;
+        }
         // Model streaming can stall before any commands are armed. The owned
         // guest remains virtual-neutral; only a live trial treats a tick gap as
         // a failed command lifetime. Nonfinite/negative native deltas still fail.
@@ -347,8 +351,9 @@ void pad_after(PadScope& scope) noexcept {
         // This is the native Pad's contextualized result, observed before the
         // behavior/action selection. It is source input, not an animation event
         // and not a vector copied into the destination controller.
-        const auto direction=read<Vector>(source.controller+0x10);
+        const auto direction=read<Vector>(source.controller+(native_lan_mode?0xc0:0x10));
         if(!valid_position(direction))throw InputFailure{Error::input_value};
+        if(native_lan_mode&&(std::abs(direction[1])>.0001f||std::abs(direction[3])>.0001f))throw InputFailure{Error::input_value};
         const auto intensity=std::hypot(direction[0],direction[2]);
         if(intensity>1.001f)throw InputFailure{Error::input_value};
         PlayerInput captured;captured.held=scope.captured.held;

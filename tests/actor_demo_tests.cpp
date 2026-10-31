@@ -77,6 +77,13 @@ int main() {
           d.motion_paused=true; g.tick(d); require(g.writes==1 && g.locomotion_commands==0);
           g.f.milliseconds+=500; g.tick(d); require(d.phase==Phase::following);
           d.stop_requested=true; g.tick(d); require(d.phase==Phase::stopped && g.writes==1 && g.locomotion_commands==0); }
+        { Demo d; Fake g; d.native_pad_reference=true;d.external_placement=true;d.initial_position={5,0,7,1};d.max_follow_ms=1500000;
+          following(d,g);require(g.guest==d.initial_position);
+          g.guest[0]+=1;g.f.milliseconds+=120001;g.tick(d);
+          require(d.phase==Phase::following&&g.writes==1&&g.locomotion_commands==0&&g.guest[0]==6);
+          g.f.milliseconds+=1500000;g.tick(d);require(d.phase==Phase::stopped&&g.writes==1); }
+        { Demo d;Fake g;d.external_placement=true;d.initial_position[0]=std::numeric_limits<float>::quiet_NaN();
+          g.tick(d);require(d.phase==Phase::failed&&g.calls==0&&g.writes==0); }
         std::cout<<"PASS local actor failure, scene lifetime, bounded movement and no-retry scenarios\n";
     } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

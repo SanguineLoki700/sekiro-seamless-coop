@@ -37,6 +37,7 @@ Demo demo;
 RemoteActor remote_actor;
 bool lan_mode{},local_loaded{};
 bool native_commands_mode{};
+bool native_lan_mode{};
 void adopt_native_command_actor(Token);
 launch::Payload lan_launch{};
 lan::Peer* network{}; // Pinned with the runtime. Never join/destroy under the loader lock.
@@ -357,6 +358,7 @@ public:
 NativeGame game;
 #include "action_native.inc"
 #include "native_controller_driver.inc"
+#include "native_lan_driver.inc"
 void publish() noexcept {
     InterlockedExchange(&status->actor_phase,static_cast<LONG>(lan_mode?remote_actor.phase:demo.phase));
     InterlockedExchange(&status->actor_error,static_cast<LONG>(lan_mode?remote_actor.error:demo.error));
@@ -423,7 +425,7 @@ void lan_step(void* creator) {
 }
 void step(void* creator) noexcept {
     try {
-        if(native_commands_mode){native_command_step(creator);return;}
+        if(native_commands_mode){if(native_lan_mode)native_lan_step(creator);else native_command_step(creator);return;}
         if(lan_mode){lan_step(creator);return;}
         if (demo.phase==Phase::stopped || demo.phase==Phase::failed) return;
         DWORD foreground_pid{};
@@ -574,10 +576,11 @@ DWORD WINAPI worker(void*) noexcept {
         if (GetTickCount64()-start>=180000) { fail_demo(Error::hook_timeout); publish(); return 0; }
         Sleep(250);
     }
-    if(lan_mode){try{
+    if(lan_mode||native_lan_mode){try{
         lan::SessionConfig c;c.role=lan_launch.lan_role==1?lan::Role::host:lan::Role::guest;
         c.ticket=*lan::parse_ticket(lan_launch.lan_ticket);c.participant=lan::random_participant();c.build.purpose=lan::Purpose::native_avatar;
         if(lan_launch.lan_profile)c.build.adapter=lan::independent_adapter;
+        if(native_lan_mode){c.build.purpose=lan::Purpose::native_commands;c.build.adapter=lan::command_adapter;}
         std::copy_n(lan_launch.executable_sha256,32,c.build.game.begin());std::copy_n(lan_launch.scenario_sha256,32,c.build.scenario.begin());
         network=new lan::Peer(std::move(c),combat_preview?"127.0.0.1":"0.0.0.0");SecureZeroMemory(lan_launch.lan_ticket,sizeof(lan_launch.lan_ticket));
     }catch(...){fail_demo(Error::binding);publish();return 0;}}
@@ -617,10 +620,16 @@ DWORD WINAPI worker(void*) noexcept {
     if(actions_mode)InterlockedOr64(&status->hooks_mask,16);
     if(native_commands_mode)InterlockedOr64(&status->hooks_mask,32);
     InterlockedExchange(&entered,0);
-    if(lan_mode){
+    if(lan_mode||native_lan_mode){
         // Publish socket readiness even while the title screen has no world
         // callbacks. This lets the notebook discover the room before loading.
         for(;;){const auto view=network->read();const auto& n=view.status;
+            if(native_lan_mode){DWORD foreground{};GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
+                if(foreground!=GetCurrentProcessId()){
+                    network->try_set_command_following(false);
+                    native_commands::pause_requested=true;native_commands::commands_armed=false;native_commands::neutralize();
+                }
+            }
             if(actions_mode){
                 if(n.action_fault!=lan::ActionFault::none)action_fault(n.action_fault);
                 AcquireSRWLockExclusive(&action_ingress);
@@ -648,10 +657,15 @@ DWORD WINAPI worker(void*) noexcept {
 bool start_native_demo(launch::SharedStatus* shared,launch::ActorTest mode,const launch::Payload* config) noexcept {
     if (status || !shared) return false;
     lan_mode=mode==launch::ActorTest::lan;
-    native_commands_mode=mode==launch::ActorTest::native_commands;
+    native_lan_mode=mode==launch::ActorTest::lan_native_commands;
+    native_commands_mode=mode==launch::ActorTest::native_commands||native_lan_mode;
     if(native_commands_mode&&!config)return false;
     if(native_commands_mode)native_command_configure(*config);
-    if(lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
+    if(lan_mode||native_lan_mode){if(!config||!valid_lan_payload(*config))return false;lan_launch=*config;}
+    if(native_lan_mode){
+        if(!native_commands::mailbox.configure_movement_onset(NativeMovementOnset::observe_continuous))return false;
+        demo.max_follow_ms=25ull*60*1000;
+    }
     status=shared;
     actions_mode=lan_mode&&lan_launch.lan_profile!=0;
     combat_preview=lan_mode&&lan_launch.lan_profile==2;

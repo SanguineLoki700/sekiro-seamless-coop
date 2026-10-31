@@ -38,6 +38,10 @@ bool Session::receive(const Packet& p,std::uint64_t now){
  if(stage_!=Stage::active)return reject(Failure::protocol);
  if(p.kind==Kind::bye){state_=State::lost;remote_.reset();return true;}
  if(p.kind==Kind::heartbeat)return true;
+ if(p.kind==Kind::command){
+  if(config_.build.purpose!=Purpose::native_commands||!actors::valid(p.command,3))return reject(Failure::protocol);
+  command_=ReceivedCommand{p.command,{p.room,p.connection,p.sender,p.command.input_generation},p.sequence,now,p.command_enabled};return true;
+ }
  if(p.kind!=Kind::frame||!valid(config_.build,p.motion))return reject(Failure::protocol);
  remote_=ReceivedMotion{p.motion,{p.room,p.connection,p.sender,p.motion.epoch},p.sequence,now};return true;
 }
@@ -48,6 +52,12 @@ void Session::tick(std::uint64_t now){
 }
 void Session::send_frame(const Motion& m){if(state_!=State::connected)return;if(!valid(config_.build,m))throw std::invalid_argument("Invalid local motion for negotiated adapter");send(Kind::frame);if(state_==State::connected)outgoing_.back().motion=m;}
 void Session::heartbeat(){if(state_==State::connected)send(Kind::heartbeat);}
+void Session::send_command(const actors::PlayerCommand& command,bool enabled){
+ if(state_!=State::connected)return;
+ if(config_.build.purpose!=Purpose::native_commands||!actors::valid(command,3))throw std::invalid_argument("Unexpected command stream");
+ send(Kind::command);if(state_==State::connected){outgoing_.back().command=command;outgoing_.back().command_enabled=enabled;}
+}
+std::optional<ReceivedCommand> Session::take_remote_command(){auto out=command_;command_.reset();return out;}
 void Session::stop(){outgoing_.clear();remote_.reset();state_=State::stopped;}
 std::vector<Packet> Session::take_outgoing(){auto out=std::move(outgoing_);outgoing_.clear();return out;}
 std::optional<Motion> Session::take_remote(){const auto frame=take_remote_frame();if(frame)return frame->motion;return {};}

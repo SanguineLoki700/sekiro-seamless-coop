@@ -47,7 +47,11 @@ enum class NativeMovementOnset {
     // remain uncredited for the first three moving updates and at most 250ms.
     // Correct physical movement is still required for consumption. Association
     // changes never rearm this window; only a real neutral begin_update does.
-    defer_verified_steering
+    defer_verified_steering,
+    // Live input may change while native turning/filtering is still active.
+    // Observe valid divergence without credit; never substitute requested input
+    // for the consumer's actual vector. The strict trial never uses this mode.
+    observe_continuous
 };
 // Serializes receiver ingress and one actor's native update/observation threads.
 // Engine calls must execute outside these methods. The supplied clock is a
@@ -87,6 +91,7 @@ public:
     // Strictly newer controller lifetime only. Refuses an in-flight original;
     // old completion must retire it before any reset can become effective.
     bool reset_generation(std::uint64_t new_generation);
+    bool configure_movement_onset(NativeMovementOnset);
     bool failed()const;
     // First failure for this mailbox object, preserved across suspend/reset.
     // Values are captured before neutralization and are diagnostics only.

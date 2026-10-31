@@ -177,7 +177,7 @@ bool initialize(const void* payload, DWORD bytes) {
     if (config.actor_padding || (config.actor_test != ActorTest::off && config.actor_test != ActorTest::follow &&
         config.actor_test != ActorTest::locomotion && config.actor_test != ActorTest::pad_reference &&
         config.actor_test != ActorTest::graph_locomotion && config.actor_test != ActorTest::lan &&
-        config.actor_test != ActorTest::native_commands)) return false;
+        config.actor_test != ActorTest::native_commands && config.actor_test != ActorTest::lan_native_commands)) return false;
     if(!skcoop::actors::valid_lan_payload(config))return false;
     if (std::all_of(std::begin(config.nonce), std::end(config.nonce), [](std::uint8_t c) { return c == 0; }))
         return false;

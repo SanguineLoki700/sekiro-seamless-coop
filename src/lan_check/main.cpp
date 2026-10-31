@@ -134,7 +134,7 @@ void start(unsigned selected_role){
  const auto internal=directory()/L"SeamlessCoop";
  advertiser.reset();browser.reset();rooms.clear();SendMessageW(rooms_box,LB_RESETCONTENT,0,0);busy=true;done=false;role=selected_role;active_ticket=ticket;
  {std::lock_guard lock(state_mutex);launch_state={};preview_state={};preview_receipt_failed=false;job_error.clear();}controls();SetWindowTextW(status_box,L"Preparando o perfil desta conta e conferindo a copia do jogo...\r\nA primeira preparacao pode copiar cerca de 25 GB. Aguarde.");
- SetWindowTextW(instructions_box,native?L"Controlador nativo: carregue o perfil de teste e fique parado em um trecho plano e vazio.\r\nA sequencia de movimento, ataque e defesa comeca automaticamente.\r\nEste resultado local e provisorio e nao valida multiplayer.\r\nAo terminar, feche o Sekiro pelo menu.":L"Seu perfil de teste fica separado do save pessoal.\r\nEm rede: F8 nos dois jogos depois de carregar e se separar.\r\nNo teste espelhado: trecho plano e vazio, sem inimigos; F8 e ande poucos passos.\r\nF9 pausa; F10 encerra a representacao. Solte a defesa antes de retomar.\r\nAinda sem validacao de dano, inimigos e campanha sincronizada.");
+ SetWindowTextW(instructions_box,native?L"Controlador nativo: carregue e fique parado em um trecho plano e vazio.\r\nA sequencia local comeca automaticamente.\r\nAo terminar, feche pelo menu.":preview?L"Diagnostico legado: F8 cria o parceiro simulado; F9 pausa; F10 encerra.\r\nEste botao nao testa o controlador nativo pela rede.":L"Nos dois jogos: carregue no mesmo trecho plano e sem inimigos.\r\nFique parado alguns segundos; o parceiro aparece automaticamente.\r\nTeste caminhada, ataque e defesa. Ao retornar de uma pausa, solte os botoes.\r\nDano, postura, inimigos e campanha ainda nao sao compartilhados.");
  try{job=std::thread([internal,ticket,selected_role,preview,native]{try{
   const auto config=native?skcoop::launcher::prepare_direct_native(internal):skcoop::launcher::prepare_direct_lan(internal,preview?1u:selected_role,ticket_text(ticket),preview);
   std::unique_ptr<LocalPreview> mirror;
@@ -174,7 +174,7 @@ void update(){
  skcoop::launcher::LaunchStatus state;LocalPreviewStatus local;bool receipt_failed{};{std::lock_guard lock(state_mutex);state=launch_state;local=preview_state;receipt_failed=preview_receipt_failed;}
  if(!state.ready)return;
  if(role==4){const auto label=native_status(state);SetWindowTextW(status_box,label.c_str());return;}
- if(role==1&&!advertiser&&state.network==static_cast<unsigned>(State::listening)&&(state.hooks&19)==19)advertiser=std::make_unique<Discovery>(active_ticket);
+ if(role==1&&!advertiser&&state.network==static_cast<unsigned>(State::listening)&&(state.hooks&35)==35)advertiser=std::make_unique<Discovery>(active_ticket);
  if(advertiser&&state.network!=static_cast<unsigned>(State::listening))advertiser.reset();
  std::wstring label=role==3?L"Teste local de ataques e defesa: um jogo com parceiro simulado.\r\nUse Continuar ou, na primeira vez, Novo Jogo.":L"Sekiro aberto com o perfil de teste desta conta.\r\nNa primeira vez escolha Novo Jogo; nas proximas, Continuar.";
  if(state.network_error==4)label+=L"\r\nVersoes incompativeis. Atualize o pacote nos dois computadores.";
@@ -192,15 +192,16 @@ void update(){
  else if(state.network==static_cast<unsigned>(State::connected)){
   if(state.waiting==3)label+=L"\r\nAnde alguns passos em um computador para separar os dois jogadores.";
   else if(state.waiting==4)label+=L"\r\nFiquem no mesmo local seguro e perto um do outro.";
-  else if(state.actor_phase==4)label+=state.paused?L"\r\nRepresentacao remota pausada. F9 retoma.":(role==3?L"\r\nTeste local ativo. Observe os ataques e a defesa do segundo personagem.":L"\r\nMovimento remoto ativo. Corrida, salto e esquiva estao em teste.");
+  else if(state.actor_phase==4)label+=state.paused?L"\r\nParceiro pausado. Volte ao jogo e solte os botoes para retomar.":(role==3?L"\r\nDiagnostico legado ativo.":L"\r\nControlador remoto ativo: teste caminhada, ataque e defesa.");
   else if(state.actor_phase==2||state.actor_phase==3)label+=L"\r\nPreparando o personagem do parceiro...";
-  else label+=role==3?L"\r\nEm um trecho plano e vazio, pressione F8 neste jogo e ande poucos passos.":L"\r\nConectados. No mesmo local seguro, pressione F8 nos dois jogos.";
+  else label+=role==3?L"\r\nEm um trecho plano e vazio, pressione F8 neste jogo e ande poucos passos.":L"\r\nConectados. Carregue nos dois jogos, no mesmo trecho seguro; a criacao e automatica.";
  }else label+=L"\r\nCarregando a conexao...";
  if(advertiser&&advertiser->read().error)label+=L"\r\nNao foi possivel anunciar a sala. Confira se outro lancador esta aberto.";
  if(state.guard_rearm)label+=L"\r\nPara retomar a defesa, solte o botao e pressione novamente.";
  if(receipt_failed)label+=L"\r\nNao foi possivel salvar o registro do parceiro simulado; o jogo continua aberto.";
  std::wostringstream text;text<<label<<L"\r\nMovimentos enviados: "<<state.sent<<L"    recebidos: "<<state.received
-  <<L"\r\nAcoes locais registradas: "<<state.actions_captured<<L"    do parceiro aplicadas: "<<state.actions_replayed;SetWindowTextW(status_box,text.str().c_str());
+  <<(role==3?L"\r\nAcoes locais registradas: ":L"\r\nComandos recebidos: ")<<(role==3?state.actions_captured:state.native_controller_commands)
+  <<(role==3?L"    do parceiro aplicadas: ":L"    consumo nativo confirmado: ")<<(role==3?state.actions_replayed:state.native_controller_consumed);SetWindowTextW(status_box,text.str().c_str());
 }
 HWND control(const wchar_t* kind,const wchar_t* label,DWORD style,int x,int y,int w,int h,int id=0){auto c=CreateWindowExW(0,kind,label,WS_CHILD|WS_VISIBLE|style,x,y,w,h,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);return c;}
 LRESULT CALLBACK procedure(HWND h,UINT message,WPARAM w,LPARAM l){try{switch(message){
@@ -214,7 +215,7 @@ LRESULT CALLBACK procedure(HWND h,UINT message,WPARAM w,LPARAM l){try{switch(mes
   rooms_box=control(L"LISTBOX",L"",WS_BORDER|LBS_NOTIFY|WS_VSCROLL|WS_TABSTOP,20,247,640,80,3);
   join_button=control(L"BUTTON",L"Entrar no PC selecionado",WS_TABSTOP,20,342,250,36,2);EnableWindow(join_button,FALSE);
   status_box=control(L"STATIC",L"Procurando salas automaticamente...\r\nNao e preciso copiar codigos nem alterar as propriedades da Steam.",0,20,397,640,168);
-  instructions_box=control(L"STATIC",L"Seu perfil de teste fica separado do save pessoal.\r\nEm rede e no teste espelhado: F8 depois de carregar e se separar.\r\nControlador nativo: carregue e fique parado; o teste e automatico.\r\nUse sempre um trecho plano e vazio, sem inimigos.\r\nAinda sem validacao de dano, inimigos e campanha sincronizada.",0,20,581,640,90);
+  instructions_box=control(L"STATIC",L"Teste LAN nativo: Criar neste PC; no outro, escolha a sala e Entrar.\r\nCarregue no mesmo trecho seguro. O parceiro aparece sem F8.\r\nTeste caminhada, ataque e defesa; solte os botoes depois de pausar.\r\nO save pessoal fica separado. Dano e campanha ainda nao sao compartilhados.",0,20,581,640,90);
   SetTimer(h,1,200,nullptr);return 0;
  case WM_TIMER:update();return 0;
  case WM_COMMAND:if(HIWORD(w)==BN_CLICKED){if(LOWORD(w)==1)start(1);else if(LOWORD(w)==2)start(2);else if(LOWORD(w)==4)start(3);else if(LOWORD(w)==5)start(4);}return 0;

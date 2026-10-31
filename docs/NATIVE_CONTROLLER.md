@@ -10,7 +10,7 @@ O lançador, assistente, instalação de teste, perfis `.co2`, backups, DLL, ide
 |---|---|---|
 | 1. Caminho nativo completo | Entrada, consumidor, proprietário e fase demonstrados no ator adicional. | Comprovado no escopo inicial: movimento, ataque e defesa pelo controlador próprio, com resultados nativos distintos da entrada. Outros controles/famílias ainda precisam de validação. |
 | 2. Prova automática em um PC | Comandos independentes, consumo downstream, deslocamento físico, controles mantidos/liberados e teste negativo. | Aceita em `4a4bd5e`: 431 comandos, 428 consumidos, avanço de 0,759 m, parada, ataque/recuperação e 2.469 ms de defesa efetiva seguida de repouso. Uma criação/posição inicial; zero drivers manuais/legados. Saída normal e saves preservados. |
-| 3. LAN existente | Mesmo adaptador alimentado pelo TCP atual; comandos com formato explicitamente versionado e proteção de sessão. | Pendente da prova do controlador. A LAN anterior continua usando o caminho legado. |
+| 3. LAN existente | Mesmo adaptador alimentado pelo TCP atual; comandos com formato explicitamente versionado e proteção de sessão. | Integração implementada com LAN 4/adaptador 5 e comandos v1. Transporte testado em dois processos; falta executar nos dois jogos reais. O caminho legado permanece explícito. |
 | 4. Combate compartilhado | Ataque, contato, defesa, dano e postura; anfitrião confirma consequências. | Pendente. A primeira entrega jogável continua sendo uma luta em dupla contra o mesmo inimigo. |
 | 5. Ampliar e otimizar | Famílias de ações, habilidades, chefes, medições de rede, Steam, quatro jogadores e continuidade. | Pendente. Testes em um PC não substituem dois jogos ou quatro máquinas. |
 
@@ -94,4 +94,4 @@ Depois que um neutro da fase atual estabelece a origem da parada, toda amostra f
 
 Veja os [resultados e limites da pesquisa](validation/native-controller-research-2026-10-28.md). O pacote público anterior não foi substituído por esta implementação.
 
-O [binding de resultados de 30/10](validation/native-action-results-2026-10-30.md) registra a pesquisa independente, a falha intermediária e a prova estrita aceita do candidato C++. A conexão desse controlador ao TCP existente é o próximo marco; a LAN anterior permanece como diagnóstico legado explícito.
+O [binding de resultados de 30/10](validation/native-action-results-2026-10-30.md) registra a pesquisa independente, a falha intermediária e a prova estrita aceita do candidato C++. A [integração LAN de comandos](validation/native-command-lan-2026-10-30.md) já está implementada para teste no PC/notebook; a confirmação entre jogos reais continua pendente. O candidato LAN exige DLL/lançador de protocolo 17; a prova histórica local usou 16.

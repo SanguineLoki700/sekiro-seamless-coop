@@ -209,7 +209,7 @@ void validate_runtime_pe(const File& file) {
         !(function>=directory.VirtualAddress&&function-directory.VirtualAddress<directory.Size),"Runtime ordinal 1 must be a local native export");
 }
 
-struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},actor_native_commands_test{},independent_profile{},combat_preview{};std::uint32_t lan_role{};std::string lan_code;};
+struct Options {fs::path game,original,runtime,roaming,coop_root,output,config;std::wstring account;bool actor_follow_test{},actor_locomotion_test{},actor_pad_reference_test{},actor_graph_locomotion_test{},actor_lan_test{},actor_native_commands_test{},actor_native_lan_test{},independent_profile{},combat_preview{};std::uint32_t lan_role{};std::string lan_code;};
 Options options_from(const fs::path& config,const fs::path& runtime_root=executable_directory()) {
     const auto settings=read_launch_settings(config);
     const auto installed=inspect_steam_install();
@@ -227,6 +227,7 @@ Options options_from(const fs::path& config,const fs::path& runtime_root=executa
     result.actor_pad_reference_test=settings.actor_pad_reference_test;
     result.actor_graph_locomotion_test=settings.actor_graph_locomotion_test;
     result.actor_native_commands_test=settings.actor_native_commands_test;
+    result.actor_native_lan_test=settings.actor_native_lan_test;
     result.independent_profile=settings.independent_profile;result.combat_preview=settings.combat_preview;result.actor_lan_test=settings.actor_lan_test;result.lan_role=settings.lan_role;result.lan_code=settings.lan_code;
     if(result.combat_preview)require(result.lan_role==1&&lan::parse_ticket(result.lan_code)->address=="127.0.0.1","Combat preview requires a local host ticket");
     wchar_t roaming[MAX_PATH]{};
@@ -584,7 +585,7 @@ int run(const Options& options, bool check_only,const LaunchObserver& observer={
         }
         shared->child_pid=child.pid;
         Payload payload{};payload.struct_size=sizeof(payload);payload.version=protocol_version;payload.host_pid=GetCurrentProcessId();payload.child_pid=child.pid;
-        payload.actor_test=options.actor_native_commands_test?ActorTest::native_commands:options.actor_lan_test?ActorTest::lan:options.actor_graph_locomotion_test?ActorTest::graph_locomotion:
+        payload.actor_test=options.actor_native_lan_test?ActorTest::lan_native_commands:options.actor_native_commands_test?ActorTest::native_commands:options.actor_lan_test?ActorTest::lan:options.actor_graph_locomotion_test?ActorTest::graph_locomotion:
             (options.actor_pad_reference_test?ActorTest::pad_reference:
             (options.actor_locomotion_test?ActorTest::locomotion:(options.actor_follow_test?ActorTest::follow:ActorTest::off)));
         std::copy(nonce.begin(),nonce.end(),payload.nonce);std::copy(game.digest.begin(),game.digest.end(),payload.executable_sha256);
@@ -742,7 +743,7 @@ static fs::path prepare_game_impl(const fs::path& requested,std::uint32_t role,s
     ensure_setup_directory(internal.path/L"config");ensure_setup_directory(internal.path/L"receipts");
     const auto config=internal.path/L"config"/ascii_wide((native_commands?"native-":"lan-")+id+".ini");
     const auto mode=native_commands?std::string("actor_test=native-commands\n"):
-        std::string("actor_test=lan\nlan_role=")+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(combat_preview?"lan_profile=combat-preview\n":(independent?"lan_profile=independent\n":""));
+        std::string(independent&&!combat_preview?"actor_test=lan-native-commands\nlan_role=":"actor_test=lan\nlan_role=")+(role==1?"host":"guest")+"\nlan_code="+std::string(code)+"\n"+(combat_preview?"lan_profile=combat-preview\n":(independent?"lan_profile=independent\n":""));
     const auto settings=std::string("[LAUNCH]\ntest_executable=")+utf8(game.wstring()+L"\\sekiro.exe")+"\ncoop_profile_root="+utf8(profile.wstring())+"\naccount="+utf8(account)+"\nreceipt_directory="+utf8((internal.path/L"receipts").wstring())+"\n"+mode;
     (void)parse_launch_settings(settings);new_bytes(config,settings);
     require(primary.unchanged()&&backup.unchanged(),"Original saves changed during preparation");

@@ -12,8 +12,8 @@
 
 namespace skcoop::launch {
 inline constexpr GUID payload_guid{0x1a6ed496,0xf4ab,0x4f85,{0x84,0x8c,0x2a,0x9c,0x83,0xd9,0xb0,0x6a}};
-inline constexpr std::uint32_t protocol_version=16;
-enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6 };
+inline constexpr std::uint32_t protocol_version=17;
+enum class ActorTest : std::uint32_t { off=0, follow=1, locomotion=2, pad_reference=3, graph_locomotion=4, lan=5, native_commands=6,lan_native_commands=7 };
 inline constexpr std::size_t path_units=1024;
 inline constexpr std::size_t account_units=32;
 

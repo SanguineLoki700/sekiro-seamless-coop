@@ -35,6 +35,7 @@ void Demo::tick(Game& game) {
             offset_[i] = f.forward[i] / length * 2.2f;
             placement_[i] += offset_[i];
         }
+        if(external_placement){if(!valid_position(initial_position)){fail(Error::invalid_pose);return;}placement_=initial_position;}
         ++creation_calls; // A failed/throwing native factory must never retry.
         actor_ = game.create();
         if (!actor_ || actor_ == f.primary) { fail(Error::factory); return; }
@@ -69,7 +70,7 @@ void Demo::tick(Game& game) {
         phase = Phase::following;
         return;
     }
-    if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= 120000) {
+    if (f.milliseconds < last_ms_ || f.milliseconds - follow_start_ >= max_follow_ms) {
         if (native_locomotion) game.command_locomotion(actor_,false);
         phase = Phase::stopped; return;
     }
